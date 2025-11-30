@@ -1,10 +1,9 @@
 -- FTF ESP Script — consolidated fixed version (patched)
 -- Ajustes:
---  - Highlights parentados para Workspace (eles não pertencem a ScreenGui)
---  - Adicionado botão "Ativar Freeze Pods" que cria aura verde arredondada em volta das FreezePods
---  - Desconexão de ragdollConnects e limpeza de ragdollBillboards / bottomUI em PlayerRemoving
---  - Melhor cleanupAll para também limpar texturas/skins/highlights
---  - Pequena reorganização e comentários
+--  - Freeze Pods aura agora envolve a cápsula inteira (Highlight) e é vermelha
+--  - ESPs com qualidade melhor (menos transparência para Fill/Outline)
+--  - Conexões de DescendantAdded/Removing para pods gerenciadas corretamente
+--  - Limpeza reforçada ao desativar opções
 
 -- Services
 local UIS = game:GetService("UserInputService")
@@ -99,7 +98,7 @@ end
 createStartupNotice()
 
 -- ---------- Main menu frame ----------
-local gWidth, gHeight = 360, 480 -- aumentei altura para acomodar novo botão
+local gWidth, gHeight = 360, 480 -- acomodando novo botão
 local Frame = Instance.new("Frame", GUI)
 Frame.Name = "FTF_Menu_Frame"
 Frame.BackgroundColor3 = Color3.fromRGB(8,10,14)
@@ -184,7 +183,7 @@ end
 -- Create buttons (reordered / spacing adjusted to include FreezePods)
 local PlayerBtn, PlayerIndicator = createFuturisticButton("Ativar ESP Jogadores", 70, Color3.fromRGB(28,140,96), Color3.fromRGB(52,215,101))
 local CompBtn, CompIndicator   = createFuturisticButton("Ativar Destacar Computadores", 136, Color3.fromRGB(28,90,170), Color3.fromRGB(54,144,255))
-local FreezeBtn, FreezeIndicator = createFuturisticButton("Ativar Freeze Pods", 202, Color3.fromRGB(40,200,80), Color3.fromRGB(80,255,140))
+local FreezeBtn, FreezeIndicator = createFuturisticButton("Ativar Freeze Pods", 202, Color3.fromRGB(200,50,50), Color3.fromRGB(255,80,80))
 local DownTimerBtn, DownIndicator = createFuturisticButton("Ativar Contador de Down", 268, Color3.fromRGB(200,120,30), Color3.fromRGB(255,200,90))
 local GraySkinBtn, GraySkinIndicator = createFuturisticButton("Ativar Skin Cinza", 334, Color3.fromRGB(80,80,90), Color3.fromRGB(130,130,140))
 local TextureBtn, TextureIndicator, TextureLabel = createFuturisticButton("Ativar Texture Tijolos Brancos", 400, Color3.fromRGB(220,220,220), Color3.fromRGB(245,245,245))
@@ -231,7 +230,9 @@ local function AddPlayerHighlight(player)
     h.Name = "[FTF_ESP_PlayerAura_DAVID]"; h.Adornee = player.Character
     -- Important: Highlight is not a GUI element, parent to Workspace so it renders correctly
     h.Parent = Workspace
-    h.FillColor = fill; h.OutlineColor = outline; h.FillTransparency = 0.19; h.OutlineTransparency = 0.08
+    -- stronger (better quality) visuals
+    h.FillColor = fill; h.OutlineColor = outline; h.FillTransparency = 0.12; h.OutlineTransparency = 0.04
+    h.Enabled = true
     playerHighlights[player] = h
 end
 local function RemovePlayerHighlight(player) if playerHighlights[player] then pcall(function() playerHighlights[player]:Destroy() end); playerHighlights[player]=nil end end
@@ -300,8 +301,10 @@ local function AddComputerHighlight(model)
     h.Name = "[FTF_ESP_ComputerAura_DAVID]"; h.Adornee = model
     -- Parent highlight to Workspace so it displays properly
     h.Parent = Workspace
+    -- stronger (better quality) visuals
     h.FillColor = getPcColor(model); h.OutlineColor = Color3.fromRGB(210,210,210)
-    h.FillTransparency = 0.14; h.OutlineTransparency = 0.08
+    h.FillTransparency = 0.10; h.OutlineTransparency = 0.03
+    h.Enabled = true
     compHighlights[model] = h
 end
 local function RemoveComputerHighlight(model) if compHighlights[model] then pcall(function() compHighlights[model]:Destroy() end); compHighlights[model]=nil end end
@@ -317,27 +320,17 @@ RunService.RenderStepped:Connect(function() if ComputerESPActive then for m,h in
 -- ========== FREEZE PODS AURA ==========
 local FreezePodsActive = false
 local podHighlights = {}
-local podDescendantConn = nil
+local podDescendantAddConn = nil
+local podDescendantRemConn = nil
 
 local function isFreezePodModel(model)
     if not model or not model:IsA("Model") then return false end
     local name = model.Name:lower()
-    if name:find("freezepod") or (name:find("freeze") and name:find("pod")) then return true end
-    -- fallback: sometimes pods are named "FreezePod" or "Freeze_Pod", try contains both tokens
+    if name:find("freezepod") then return true end
+    if name:find("freeze") and name:find("pod") then return true end
+    -- some maps may name them "Freeze_Pod" or similar; check tokens
+    if name:find("freeze") and name:find("capsule") then return true end
     return false
-end
-
-local function getPodMainPart(model)
-    -- prefer a child named BasePart or a part named "BasePart", otherwise pick largest BasePart
-    if not model then return nil end
-    if model:FindFirstChild("BasePart") and model.BasePart:IsA("BasePart") then return model.BasePart end
-    local biggest
-    for _,c in ipairs(model:GetDescendants()) do
-        if c:IsA("BasePart") then
-            if not biggest or c.Size.Magnitude > biggest.Size.Magnitude then biggest = c end
-        end
-    end
-    return biggest
 end
 
 local function AddFreezePodHighlight(model)
@@ -345,12 +338,16 @@ local function AddFreezePodHighlight(model)
     if podHighlights[model] then podHighlights[model]:Destroy(); podHighlights[model]=nil end
     local h = Instance.new("Highlight")
     h.Name = "[FTF_ESP_FreezePodAura_DAVID]"
+    -- Adornee the whole model so the aura envelopes the entire capsule
     h.Adornee = model
     h.Parent = Workspace
-    h.FillColor = Color3.fromRGB(100,255,140) -- verde claro
-    h.OutlineColor = Color3.fromRGB(40,180,70) -- verde escuro
-    h.FillTransparency = 0.25
-    h.OutlineTransparency = 0.06
+    -- red aura (requested)
+    h.FillColor = Color3.fromRGB(255,100,100)    -- red-ish fill
+    h.OutlineColor = Color3.fromRGB(200,40,40)   -- darker red outline
+    -- stronger / better quality: less transparent so it's clearer
+    h.FillTransparency = 0.08
+    h.OutlineTransparency = 0.02
+    h.Enabled = true
     podHighlights[model] = h
 end
 
@@ -369,13 +366,23 @@ end
 -- Listen to workspace changes when enabled
 local function onPodDescendantAdded(desc)
     if not FreezePodsActive then return end
-    if desc and desc:IsA("Model") and isFreezePodModel(desc) then
+    if desc and (desc:IsA("Model") or desc:IsA("Folder")) and isFreezePodModel(desc) then
         task.delay(0.05, function() AddFreezePodHighlight(desc) end)
+    elseif desc and desc:IsA("BasePart") then
+        -- if a BasePart is added inside an existing pod model, try to find ancestor model
+        local mdl = desc:FindFirstAncestorWhichIsA("Model")
+        if mdl and isFreezePodModel(mdl) then task.delay(0.05, function() AddFreezePodHighlight(mdl) end) end
     end
 end
 
 local function onPodDescendantRemoving(desc)
-    RemoveFreezePodHighlight(desc)
+    -- if model removed, ensure highlight removed
+    if desc and desc:IsA("Model") and isFreezePodModel(desc) then
+        RemoveFreezePodHighlight(desc)
+    elseif desc and desc:IsA("BasePart") then
+        local mdl = desc:FindFirstAncestorWhichIsA("Model")
+        if mdl and isFreezePodModel(mdl) then RemoveFreezePodHighlight(mdl) end
+    end
 end
 
 -- ========== RAGDOLL DOWN TIMER (28s) ==========
@@ -605,20 +612,23 @@ end)
 FreezeBtn.MouseButton1Click:Connect(function()
     FreezePodsActive = not FreezePodsActive
     if FreezePodsActive then
-        FreezeIndicator.BackgroundColor3 = Color3.fromRGB(80,255,140)
+        FreezeIndicator.BackgroundColor3 = Color3.fromRGB(255,80,80)
         -- create highlights for existing pods
         RefreshFreezePods()
         -- connect to workspace changes to add future pods
-        if not podDescendantConn then
-            podDescendantConn = Workspace.DescendantAdded:Connect(onPodDescendantAdded)
-            Workspace.DescendantRemoving:Connect(onPodDescendantRemoving)
+        if not podDescendantAddConn then
+            podDescendantAddConn = Workspace.DescendantAdded:Connect(onPodDescendantAdded)
+        end
+        if not podDescendantRemConn then
+            podDescendantRemConn = Workspace.DescendantRemoving:Connect(onPodDescendantRemoving)
         end
         if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Desativar Freeze Pods" end
     else
         FreezeIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
         -- remove highlights
         for m,_ in pairs(podHighlights) do RemoveFreezePodHighlight(m) end
-        if podDescendantConn then pcall(function() podDescendantConn:Disconnect() end); podDescendantConn = nil end
+        if podDescendantAddConn then pcall(function() podDescendantAddConn:Disconnect() end); podDescendantAddConn = nil end
+        if podDescendantRemConn then pcall(function() podDescendantRemConn:Disconnect() end); podDescendantRemConn = nil end
         if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Ativar Freeze Pods" end
     end
 end)
@@ -661,9 +671,10 @@ local function cleanupAll()
     for p,_ in pairs(bottomUI) do if bottomUI[p] and bottomUI[p].screenGui and bottomUI[p].screenGui.Parent then bottomUI[p].screenGui:Destroy() end bottomUI[p]=nil end
     -- restore any textures still in backup
     if next(textureBackup) ~= nil then restoreTextures() end
-    -- remove pod highlights
+    -- remove pod highlights and disconnect pod listeners
     for m,_ in pairs(podHighlights) do RemoveFreezePodHighlight(m) end
-    if podDescendantConn then pcall(function() podDescendantConn:Disconnect() end); podDescendantConn = nil end
+    if podDescendantAddConn then pcall(function() podDescendantAddConn:Disconnect() end); podDescendantAddConn = nil end
+    if podDescendantRemConn then pcall(function() podDescendantRemConn:Disconnect() end); podDescendantRemConn = nil end
 end
 
 -- Bind PlayerRemoving to cleanup for players
