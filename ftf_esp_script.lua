@@ -1,9 +1,9 @@
 -- FTF ESP Script — consolidated fixed version (patched)
 -- Ajustes:
---  - Freeze Pods aura agora envolve a cápsula inteira (Highlight) e é vermelha
---  - ESPs com qualidade melhor (menos transparência para Fill/Outline)
---  - Conexões de DescendantAdded/Removing para pods gerenciadas corretamente
---  - Limpeza reforçada ao desativar opções
+--  - Adicionado botão "ESP Doors" (Ativar ESP Doors) com aura amarela para portas
+--  - Highlights parentados na Workspace; qualidade de ESP melhorada
+--  - Conexões de DescendantAdded/Removing para portas gerenciadas corretamente
+--  - Layout do menu ajustado para acomodar o novo botão
 
 -- Services
 local UIS = game:GetService("UserInputService")
@@ -98,7 +98,7 @@ end
 createStartupNotice()
 
 -- ---------- Main menu frame ----------
-local gWidth, gHeight = 360, 480 -- acomodando novo botão
+local gWidth, gHeight = 360, 540 -- aumentado para acomodar novo botão
 local Frame = Instance.new("Frame", GUI)
 Frame.Name = "FTF_Menu_Frame"
 Frame.BackgroundColor3 = Color3.fromRGB(8,10,14)
@@ -180,13 +180,14 @@ local function createFuturisticButton(txt, ypos, c1, c2)
     return btnOuter, indBar, label
 end
 
--- Create buttons (reordered / spacing adjusted to include FreezePods)
+-- Create buttons (reordered / spacing adjusted to include ESP Doors)
 local PlayerBtn, PlayerIndicator = createFuturisticButton("Ativar ESP Jogadores", 70, Color3.fromRGB(28,140,96), Color3.fromRGB(52,215,101))
 local CompBtn, CompIndicator   = createFuturisticButton("Ativar Destacar Computadores", 136, Color3.fromRGB(28,90,170), Color3.fromRGB(54,144,255))
-local FreezeBtn, FreezeIndicator = createFuturisticButton("Ativar Freeze Pods", 202, Color3.fromRGB(200,50,50), Color3.fromRGB(255,80,80))
-local DownTimerBtn, DownIndicator = createFuturisticButton("Ativar Contador de Down", 268, Color3.fromRGB(200,120,30), Color3.fromRGB(255,200,90))
-local GraySkinBtn, GraySkinIndicator = createFuturisticButton("Ativar Skin Cinza", 334, Color3.fromRGB(80,80,90), Color3.fromRGB(130,130,140))
-local TextureBtn, TextureIndicator, TextureLabel = createFuturisticButton("Ativar Texture Tijolos Brancos", 400, Color3.fromRGB(220,220,220), Color3.fromRGB(245,245,245))
+local DoorBtn, DoorIndicator   = createFuturisticButton("Ativar ESP Doors", 202, Color3.fromRGB(230,200,60), Color3.fromRGB(255,220,100))
+local FreezeBtn, FreezeIndicator = createFuturisticButton("Ativar Freeze Pods", 268, Color3.fromRGB(200,50,50), Color3.fromRGB(255,80,80))
+local DownTimerBtn, DownIndicator = createFuturisticButton("Ativar Contador de Down", 334, Color3.fromRGB(200,120,30), Color3.fromRGB(255,200,90))
+local GraySkinBtn, GraySkinIndicator = createFuturisticButton("Ativar Skin Cinza", 400, Color3.fromRGB(80,80,90), Color3.fromRGB(130,130,140))
+local TextureBtn, TextureIndicator, TextureLabel = createFuturisticButton("Ativar Texture Tijolos Brancos", 466, Color3.fromRGB(220,220,220), Color3.fromRGB(245,245,245))
 
 -- Close and draggable
 local CloseBtn = Instance.new("TextButton", Frame); CloseBtn.Size = UDim2.new(0,36,0,36); CloseBtn.Position = UDim2.new(1,-44,0,8)
@@ -228,9 +229,7 @@ local function AddPlayerHighlight(player)
     local fill, outline = HighlightColorForPlayer(player)
     local h = Instance.new("Highlight")
     h.Name = "[FTF_ESP_PlayerAura_DAVID]"; h.Adornee = player.Character
-    -- Important: Highlight is not a GUI element, parent to Workspace so it renders correctly
     h.Parent = Workspace
-    -- stronger (better quality) visuals
     h.FillColor = fill; h.OutlineColor = outline; h.FillTransparency = 0.12; h.OutlineTransparency = 0.04
     h.Enabled = true
     playerHighlights[player] = h
@@ -299,9 +298,7 @@ local function AddComputerHighlight(model)
     if compHighlights[model] then compHighlights[model]:Destroy(); compHighlights[model]=nil end
     local h = Instance.new("Highlight")
     h.Name = "[FTF_ESP_ComputerAura_DAVID]"; h.Adornee = model
-    -- Parent highlight to Workspace so it displays properly
     h.Parent = Workspace
-    -- stronger (better quality) visuals
     h.FillColor = getPcColor(model); h.OutlineColor = Color3.fromRGB(210,210,210)
     h.FillTransparency = 0.10; h.OutlineTransparency = 0.03
     h.Enabled = true
@@ -317,6 +314,70 @@ Workspace.DescendantAdded:Connect(function(obj) if ComputerESPActive and isCompu
 Workspace.DescendantRemoving:Connect(RemoveComputerHighlight)
 RunService.RenderStepped:Connect(function() if ComputerESPActive then for m,h in pairs(compHighlights) do if m and m.Parent and h and h.Parent then h.FillColor = getPcColor(m) end end end end)
 
+-- ========== ESP DOORS (AMARELO) ==========
+local DoorESPActive = false
+local doorHighlights = {}
+local doorDescendantAddConn = nil
+local doorDescendantRemConn = nil
+
+local function isDoorModel(model)
+    if not model or not model:IsA("Model") then return false end
+    local name = model.Name:lower()
+    -- catch common door model names
+    if name:find("door") then return true end
+    if name:find("single") and name:find("door") then return true end
+    if name:find("double") and name:find("door") then return true end
+    if name:find("exitdoor") then return true end
+    return false
+end
+
+local function AddDoorHighlight(model)
+    if not model or not isDoorModel(model) then return end
+    if doorHighlights[model] then doorHighlights[model]:Destroy(); doorHighlights[model]=nil end
+    local h = Instance.new("Highlight")
+    h.Name = "[FTF_ESP_DoorAura_DAVID]"
+    h.Adornee = model
+    h.Parent = Workspace
+    h.FillColor = Color3.fromRGB(255,230,120)   -- amarelo claro
+    h.OutlineColor = Color3.fromRGB(200,160,30) -- amarelo escuro
+    -- melhor qualidade (menos transparência)
+    h.FillTransparency = 0.10
+    h.OutlineTransparency = 0.03
+    h.Enabled = true
+    doorHighlights[model] = h
+end
+
+local function RemoveDoorHighlight(model)
+    if doorHighlights[model] then pcall(function() doorHighlights[model]:Destroy() end); doorHighlights[model]=nil end
+end
+
+local function RefreshDoorESP()
+    for m,_ in pairs(doorHighlights) do RemoveDoorHighlight(m) end
+    if not DoorESPActive then return end
+    for _,d in ipairs(Workspace:GetDescendants()) do
+        if isDoorModel(d) then AddDoorHighlight(d) end
+    end
+end
+
+local function onDoorDescendantAdded(desc)
+    if not DoorESPActive then return end
+    if desc and (desc:IsA("Model") or desc:IsA("Folder")) and isDoorModel(desc) then
+        task.delay(0.05, function() AddDoorHighlight(desc) end)
+    elseif desc and desc:IsA("BasePart") then
+        local mdl = desc:FindFirstAncestorWhichIsA("Model")
+        if mdl and isDoorModel(mdl) then task.delay(0.05, function() AddDoorHighlight(mdl) end) end
+    end
+end
+
+local function onDoorDescendantRemoving(desc)
+    if desc and desc:IsA("Model") and isDoorModel(desc) then
+        RemoveDoorHighlight(desc)
+    elseif desc and desc:IsA("BasePart") then
+        local mdl = desc:FindFirstAncestorWhichIsA("Model")
+        if mdl and isDoorModel(mdl) then RemoveDoorHighlight(mdl) end
+    end
+end
+
 -- ========== FREEZE PODS AURA ==========
 local FreezePodsActive = false
 local podHighlights = {}
@@ -328,7 +389,6 @@ local function isFreezePodModel(model)
     local name = model.Name:lower()
     if name:find("freezepod") then return true end
     if name:find("freeze") and name:find("pod") then return true end
-    -- some maps may name them "Freeze_Pod" or similar; check tokens
     if name:find("freeze") and name:find("capsule") then return true end
     return false
 end
@@ -338,13 +398,10 @@ local function AddFreezePodHighlight(model)
     if podHighlights[model] then podHighlights[model]:Destroy(); podHighlights[model]=nil end
     local h = Instance.new("Highlight")
     h.Name = "[FTF_ESP_FreezePodAura_DAVID]"
-    -- Adornee the whole model so the aura envelopes the entire capsule
     h.Adornee = model
     h.Parent = Workspace
-    -- red aura (requested)
-    h.FillColor = Color3.fromRGB(255,100,100)    -- red-ish fill
-    h.OutlineColor = Color3.fromRGB(200,40,40)   -- darker red outline
-    -- stronger / better quality: less transparent so it's clearer
+    h.FillColor = Color3.fromRGB(255,100,100)    -- vermelho (pedido anterior)
+    h.OutlineColor = Color3.fromRGB(200,40,40)
     h.FillTransparency = 0.08
     h.OutlineTransparency = 0.02
     h.Enabled = true
@@ -363,20 +420,17 @@ local function RefreshFreezePods()
     end
 end
 
--- Listen to workspace changes when enabled
 local function onPodDescendantAdded(desc)
     if not FreezePodsActive then return end
     if desc and (desc:IsA("Model") or desc:IsA("Folder")) and isFreezePodModel(desc) then
         task.delay(0.05, function() AddFreezePodHighlight(desc) end)
     elseif desc and desc:IsA("BasePart") then
-        -- if a BasePart is added inside an existing pod model, try to find ancestor model
         local mdl = desc:FindFirstAncestorWhichIsA("Model")
         if mdl and isFreezePodModel(mdl) then task.delay(0.05, function() AddFreezePodHighlight(mdl) end) end
     end
 end
 
 local function onPodDescendantRemoving(desc)
-    -- if model removed, ensure highlight removed
     if desc and desc:IsA("Model") and isFreezePodModel(desc) then
         RemoveFreezePodHighlight(desc)
     elseif desc and desc:IsA("BasePart") then
@@ -608,24 +662,35 @@ CompBtn.MouseButton1Click:Connect(function()
     if ComputerESPActive then CompIndicator.BackgroundColor3 = Color3.fromRGB(54,144,255) else CompIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220) end
 end)
 
+-- Door ESP button
+DoorBtn.MouseButton1Click:Connect(function()
+    DoorESPActive = not DoorESPActive
+    if DoorESPActive then
+        DoorIndicator.BackgroundColor3 = Color3.fromRGB(255,220,100)
+        RefreshDoorESP()
+        if not doorDescendantAddConn then doorDescendantAddConn = Workspace.DescendantAdded:Connect(onDoorDescendantAdded) end
+        if not doorDescendantRemConn then doorDescendantRemConn = Workspace.DescendantRemoving:Connect(onDoorDescendantRemoving) end
+        if buttonLabelMap[DoorBtn] then buttonLabelMap[DoorBtn].Text = "Desativar ESP Doors" end
+    else
+        DoorIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
+        for m,_ in pairs(doorHighlights) do RemoveDoorHighlight(m) end
+        if doorDescendantAddConn then pcall(function() doorDescendantAddConn:Disconnect() end); doorDescendantAddConn = nil end
+        if doorDescendantRemConn then pcall(function() doorDescendantRemConn:Disconnect() end); doorDescendantRemConn = nil end
+        if buttonLabelMap[DoorBtn] then buttonLabelMap[DoorBtn].Text = "Ativar ESP Doors" end
+    end
+end)
+
 -- Freeze Pods button
 FreezeBtn.MouseButton1Click:Connect(function()
     FreezePodsActive = not FreezePodsActive
     if FreezePodsActive then
         FreezeIndicator.BackgroundColor3 = Color3.fromRGB(255,80,80)
-        -- create highlights for existing pods
         RefreshFreezePods()
-        -- connect to workspace changes to add future pods
-        if not podDescendantAddConn then
-            podDescendantAddConn = Workspace.DescendantAdded:Connect(onPodDescendantAdded)
-        end
-        if not podDescendantRemConn then
-            podDescendantRemConn = Workspace.DescendantRemoving:Connect(onPodDescendantRemoving)
-        end
+        if not podDescendantAddConn then podDescendantAddConn = Workspace.DescendantAdded:Connect(onPodDescendantAdded) end
+        if not podDescendantRemConn then podDescendantRemConn = Workspace.DescendantRemoving:Connect(onPodDescendantRemoving) end
         if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Desativar Freeze Pods" end
     else
         FreezeIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
-        -- remove highlights
         for m,_ in pairs(podHighlights) do RemoveFreezePodHighlight(m) end
         if podDescendantAddConn then pcall(function() podDescendantAddConn:Disconnect() end); podDescendantAddConn = nil end
         if podDescendantRemConn then pcall(function() podDescendantRemConn:Disconnect() end); podDescendantRemConn = nil end
@@ -665,16 +730,20 @@ local function cleanupAll()
     for p,_ in pairs(playerHighlights) do RemovePlayerHighlight(p) end
     for p,_ in pairs(NameTags) do RemoveNameTag(p) end
     for m,_ in pairs(compHighlights) do RemoveComputerHighlight(m) end
+    for m,_ in pairs(doorHighlights) do RemoveDoorHighlight(m) end
+    for m,_ in pairs(podHighlights) do RemoveFreezePodHighlight(m) end
     -- disconnect ragdoll listeners and remove billboards
     for p,conn in pairs(ragdollConnects) do pcall(function() conn:Disconnect() end); ragdollConnects[p]=nil end
     for p,_ in pairs(ragdollBillboards) do removeRagdollBillboard(p) end
     for p,_ in pairs(bottomUI) do if bottomUI[p] and bottomUI[p].screenGui and bottomUI[p].screenGui.Parent then bottomUI[p].screenGui:Destroy() end bottomUI[p]=nil end
     -- restore any textures still in backup
     if next(textureBackup) ~= nil then restoreTextures() end
-    -- remove pod highlights and disconnect pod listeners
-    for m,_ in pairs(podHighlights) do RemoveFreezePodHighlight(m) end
+    -- disconnect workspace listeners
+    if doorDescendantAddConn then pcall(function() doorDescendantAddConn:Disconnect() end); doorDescendantAddConn = nil end
+    if doorDescendantRemConn then pcall(function() doorDescendantRemConn:Disconnect() end); doorDescendantRemConn = nil end
     if podDescendantAddConn then pcall(function() podDescendantAddConn:Disconnect() end); podDescendantAddConn = nil end
     if podDescendantRemConn then pcall(function() podDescendantRemConn:Disconnect() end); podDescendantRemConn = nil end
+    if textureDescendantConn then pcall(function() textureDescendantConn:Disconnect() end); textureDescendantConn = nil end
 end
 
 -- Bind PlayerRemoving to cleanup for players
