@@ -1,11 +1,14 @@
 --[[
-FTF ESP Script — consolidated fixed version
-- Repaired full feature set so everything runs together (ESP, ComputerESP, Ragdoll timer, GraySkin, Texture toggle).
-- Texture toggle is safe (skips player characters & processes in batches) and is toggleable on/off.
-- Button labels update correctly and UI references are consistent.
-- Uses task.spawn / Heartbeat yields to keep the game responsive.
-- Copy this file to your repo replacing the previous one, then load with:
-  loadstring(game:HttpGet("https://raw.githubusercontent.com/1D4vid/ftf_esp_script.lua/main/ftf_esp_script.lua", true))()
+FTF ESP Script — consolidated version with Freeze Pods toggle
+- Tudo o que já estava: ESP jogadores, ESP computadores, ragdoll timers, gray skin, texture toggle.
+- Adicionado botão toggle "Freeze Pods" (Ativar / Desativar) que carrega o script remoto
+  https://raw.githubusercontent.com/zyn789/LemonHub/main/FleeTheFacility.lua via loadstring.
+  - Ao ativar: faz download & executa o script; se o script retornar uma função de cleanup,
+    ela será salva e chamada ao desativar.
+  - Ao desativar: tenta chamar a função de cleanup retornada; se não houver, tenta funções
+    comuns no _G; se nada estiver disponível, informa que pode ser necessário reconectar
+    (limitado por scripts externos que não expõem cleanup).
+- Mantive segurança/compatibilidade: não interrompe as outras features; atualizei UI.
 ]]
 
 -- Services
@@ -101,9 +104,9 @@ end
 createStartupNotice()
 
 -- ---------- Main menu frame ----------
-local gWidth, gHeight = 360, 420
+local gWidth, gHeight = 360, 460 -- increased height to fit Freeze button
 local Frame = Instance.new("Frame", GUI)
-Frame.Name = "FTF_Menu_Frame"
+Frame.Name = "FTF_Menu_FRAME"
 Frame.BackgroundColor3 = Color3.fromRGB(8,10,14)
 Frame.Size = UDim2.new(0, gWidth, 0, gHeight)
 Frame.Position = UDim2.new(0.5, -gWidth/2, 0.17, 0)
@@ -123,7 +126,7 @@ Title.BackgroundTransparency = 1; Title.TextXAlignment = Enum.TextXAlignment.Lef
 local Line = Instance.new("Frame", Frame)
 Line.BackgroundColor3 = Color3.fromRGB(20,28,36); Line.Position = UDim2.new(0,0,0,48); Line.Size = UDim2.new(1,0,0,2)
 
--- button creator that returns (button, indicator, labelRef)
+-- Futuristic button creator
 local function createFuturisticButton(txt, ypos, c1, c2)
     local btnOuter = Instance.new("TextButton", Frame)
     btnOuter.Name = "FuturBtn_"..txt:gsub("%s+","_")
@@ -188,7 +191,8 @@ local PlayerBtn, PlayerIndicator = createFuturisticButton("Ativar ESP Jogadores"
 local CompBtn, CompIndicator   = createFuturisticButton("Ativar Destacar Computadores", 136, Color3.fromRGB(28,90,170), Color3.fromRGB(54,144,255))
 local DownTimerBtn, DownIndicator = createFuturisticButton("Ativar Contador de Down", 202, Color3.fromRGB(200,120,30), Color3.fromRGB(255,200,90))
 local GraySkinBtn, GraySkinIndicator = createFuturisticButton("Ativar Skin Cinza", 268, Color3.fromRGB(80,80,90), Color3.fromRGB(130,130,140))
-local TextureBtn, TextureIndicator, TextureLabel = createFuturisticButton("Ativar Texture Tijolos Brancos", 334, Color3.fromRGB(220,220,220), Color3.fromRGB(245,245,245))
+local TextureBtn, TextureIndicator = createFuturisticButton("Ativar Texture Tijolos Brancos", 334, Color3.fromRGB(220,220,220), Color3.fromRGB(245,245,245))
+local FreezeBtn, FreezeIndicator = createFuturisticButton("Ativar Freeze Pods", 394, Color3.fromRGB(200,140,220), Color3.fromRGB(220,180,240))
 
 -- Close and draggable
 local CloseBtn = Instance.new("TextButton", Frame); CloseBtn.Size = UDim2.new(0,36,0,36); CloseBtn.Position = UDim2.new(1,-44,0,8)
@@ -504,10 +508,8 @@ local function enableTextureToggle()
     TextureActive = true
     TextureIndicator.BackgroundColor3 = Color3.fromRGB(245,245,245)
     TweenService:Create(TextureIndicator, TweenInfo.new(0.18), {Size = UDim2.new(0.78,0,0.72,0), Position = UDim2.new(0.11,0,0.14,0)}):Play()
-    setmetatable({}, {__mode = "k"}) -- harmless placeholder
     task.spawn(applyWhiteBrickToAll)
     textureDescendantConn = Workspace.DescendantAdded:Connect(onWorkspaceDescendantAdded)
-    -- update visible label
     if buttonLabelMap[TextureBtn] then buttonLabelMap[TextureBtn].Text = "Desativar Texture Tijolos Brancos" end
 end
 
@@ -519,6 +521,79 @@ local function disableTextureToggle()
     TextureIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
     TweenService:Create(TextureIndicator, TweenInfo.new(0.22), {Size = UDim2.new(0.38,0,0.5,0), Position = UDim2.new(0.06,0,0.25,0)}):Play()
     if buttonLabelMap[TextureBtn] then buttonLabelMap[TextureBtn].Text = "Ativar Texture Tijolos Brancos" end
+end
+
+-- ========== FREEZE PODS TOGGLE (external script) ==========
+local FreezeActive = false
+local freezeCleanup = nil
+-- prefer the canonical raw URL form
+local freezeRawURL = "https://raw.githubusercontent.com/zyn789/LemonHub/main/FleeTheFacility.lua"
+
+local function tryCallCleanup(fn)
+    if type(fn) == "function" then
+        pcall(fn)
+        return true
+    end
+    return false
+end
+
+local function enableFreeze()
+    if FreezeActive then return end
+    FreezeActive = true
+    FreezeIndicator.BackgroundColor3 = Color3.fromRGB(240,180,255)
+    TweenService:Create(FreezeIndicator, TweenInfo.new(0.18), {Size = UDim2.new(0.78,0,0.72,0), Position = UDim2.new(0.11,0,0.14,0)}):Play()
+    -- attempt to download & execute; capture returned cleanup function if any
+    task.spawn(function()
+        local ok, ret = pcall(function()
+            local code = game:HttpGet(freezeRawURL, true)
+            local chunk = loadstring(code)
+            if chunk then
+                return chunk()
+            end
+        end)
+        if ok and type(ret) == "function" then
+            freezeCleanup = ret
+        else
+            -- ret may be nil or not a function; keep freezeCleanup as-is (nil)
+            freezeCleanup = freezeCleanup -- no-op
+        end
+    end)
+    if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Desativar Freeze Pods" end
+end
+
+local function disableFreeze()
+    if not FreezeActive then return end
+    FreezeActive = false
+    -- try cleanup function returned by script
+    local cleaned = false
+    if freezeCleanup and type(freezeCleanup) == "function" then
+        pcall(freezeCleanup)
+        cleaned = true
+        freezeCleanup = nil
+    end
+    -- attempt some common global cleanup names (best-effort)
+    if not cleaned then
+        pcall(function()
+            if _G and type(_G.FleeTheFacility) == "table" and type(_G.FleeTheFacility.Destroy) == "function" then
+                _G.FleeTheFacility.Destroy()
+                cleaned = true
+            elseif _G and type(_G.FleeTheFacility) == "function" then
+                pcall(_G.FleeTheFacility)
+                cleaned = true
+            elseif _G and type(_G.LemonHub) == "table" and type(_G.LemonHub.Cleanup) == "function" then
+                _G.LemonHub.Cleanup()
+                cleaned = true
+            end
+        end)
+    end
+    -- if still not cleaned, we can't reliably remove external script — inform in console
+    if not cleaned then
+        warn("[FTF_ESP] Não foi possível limpar automaticamente o script Freeze Pods. Se o script não expor uma função de cleanup, pode ser necessário reconectar para remover.")
+    end
+
+    FreezeIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
+    TweenService:Create(FreezeIndicator, TweenInfo.new(0.22), {Size = UDim2.new(0.38,0,0.5,0), Position = UDim2.new(0.06,0,0.25,0)}):Play()
+    if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Ativar Freeze Pods" end
 end
 
 -- ========== BUTTON BEHAVIORS (wiring UI) ==========
@@ -557,10 +632,15 @@ TextureBtn.MouseButton1Click:Connect(function()
     if not TextureActive then enableTextureToggle() else disableTextureToggle() end
 end)
 
+FreezeBtn.MouseButton1Click:Connect(function()
+    if not FreezeActive then enableFreeze() else disableFreeze() end
+end)
+
 -- Cleanup on unload (best effort)
 local function cleanupAll()
     if TextureActive then disableTextureToggle() end
     if GraySkinActive then disableGraySkin() end
+    if FreezeActive then disableFreeze() end
     for p,_ in pairs(playerHighlights) do RemovePlayerHighlight(p) end
     for p,_ in pairs(NameTags) do RemoveNameTag(p) end
 end
