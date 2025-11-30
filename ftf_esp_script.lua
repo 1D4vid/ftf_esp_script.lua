@@ -4,6 +4,8 @@
 --  - Mantida limpeza de conexões e comportamento de toggle
 --  - Qualidade dos outros highlights mantida (players/computers/pods)
 --  - ADIÇÃO: Teleporte (janela separada) com lista dinâmica de jogadores para teleportar
+--  - ADIÇÃO: Caixa de pesquisa na janela de Teleporte e toggle "Fechar ao Teleportar"
+--  - FIX: remoção/limpeza segura do TeleportGui (substitui safeDestroy indefinida)
 
 -- Services
 local UIS = game:GetService("UserInputService")
@@ -711,8 +713,34 @@ tpClose.Size = UDim2.new(0, 28, 0, 28); tpClose.Position = UDim2.new(1, -40, 0, 
 tpClose.BackgroundTransparency = 1; tpClose.Text = "✕"; tpClose.Font = Enum.Font.GothamBlack; tpClose.TextColor3 = Color3.fromRGB(180,200,220)
 tpClose.MouseButton1Click:Connect(function() TeleportGui.Visible = false end)
 
+-- Search box
+local tpSearch = Instance.new("TextBox", TeleportGui)
+tpSearch.Size = UDim2.new(1, -24 - 12 - 12, 0, 28)
+tpSearch.Position = UDim2.new(0, 12, 0, 48)
+tpSearch.BackgroundColor3 = Color3.fromRGB(18,20,24)
+tpSearch.TextColor3 = Color3.fromRGB(200,220,240)
+tpSearch.PlaceholderText = "Pesquisar jogador..."
+tpSearch.ClearTextOnFocus = false
+local tpSearchCorner = Instance.new("UICorner", tpSearch); tpSearchCorner.CornerRadius = UDim.new(0,8)
+
+-- Close-on-teleport toggle
+local CloseOnTeleport = true
+local tpCloseToggle = Instance.new("TextButton", TeleportGui)
+tpCloseToggle.Size = UDim2.new(0, 132, 0, 24)
+tpCloseToggle.Position = UDim2.new(1, -152, 0, 12)
+tpCloseToggle.BackgroundColor3 = Color3.fromRGB(18,20,24)
+tpCloseToggle.TextColor3 = Color3.fromRGB(200,220,240)
+tpCloseToggle.Font = Enum.Font.GothamSemibold
+tpCloseToggle.TextSize = 14
+tpCloseToggle.Text = "Fechar ao Teleportar: ON"
+local tpCloseToggleCorner = Instance.new("UICorner", tpCloseToggle); tpCloseToggleCorner.CornerRadius = UDim.new(0,8)
+tpCloseToggle.MouseButton1Click:Connect(function()
+    CloseOnTeleport = not CloseOnTeleport
+    tpCloseToggle.Text = "Fechar ao Teleportar: " .. (CloseOnTeleport and "ON" or "OFF")
+end)
+
 local tpScroll = Instance.new("ScrollingFrame", TeleportGui)
-tpScroll.Size = UDim2.new(1, -24, 1, -68); tpScroll.Position = UDim2.new(0, 12, 0, 48)
+tpScroll.Size = UDim2.new(1, -24, 1, -112); tpScroll.Position = UDim2.new(0, 12, 0, 84)
 tpScroll.BackgroundTransparency = 1; tpScroll.BorderSizePixel = 0; tpScroll.ScrollBarThickness = 8
 local tpLayout = Instance.new("UIListLayout", tpScroll); tpLayout.SortOrder = Enum.SortOrder.LayoutOrder; tpLayout.Padding = UDim.new(0, 8)
 
@@ -727,41 +755,58 @@ end
 
 local function buildTeleportButtons()
     clearTeleportButtons()
+    local filter = (tpSearch.Text or ""):lower()
+    local order = 0
     for i, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer then
-            local b = Instance.new("TextButton", tpScroll)
-            b.Name = "TP_Button_" .. pl.Name
-            b.Size = UDim2.new(1, -8, 0, 44)
-            b.BackgroundColor3 = Color3.fromRGB(18,20,24)
-            b.BorderSizePixel = 0
-            local bc = Instance.new("UICorner", b); bc.CornerRadius = UDim.new(0,8)
-            local lbl = Instance.new("TextLabel", b)
-            lbl.Size = UDim2.new(1, -12, 1, 0); lbl.Position = UDim2.new(0, 8, 0, 0)
-            lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 14
-            lbl.TextColor3 = Color3.fromRGB(200,220,240)
-            lbl.TextXAlignment = Enum.TextXAlignment.Left
-            lbl.Text = pl.DisplayName .. " (" .. pl.Name .. ")"
-            TeleportButtons[pl] = b
+            local displayName = (pl.DisplayName or ""):lower()
+            local username = (pl.Name or ""):lower()
+            if filter == "" or displayName:find(filter) or username:find(filter) then
+                order = order + 1
+                local b = Instance.new("TextButton", tpScroll)
+                b.Name = "TP_Button_" .. pl.Name
+                b.LayoutOrder = order
+                b.Size = UDim2.new(1, -8, 0, 44)
+                b.BackgroundColor3 = Color3.fromRGB(18,20,24)
+                b.BorderSizePixel = 0
+                local bc = Instance.new("UICorner", b); bc.CornerRadius = UDim.new(0,8)
+                local lbl = Instance.new("TextLabel", b)
+                lbl.Size = UDim2.new(1, -12, 1, 0); lbl.Position = UDim2.new(0, 8, 0, 0)
+                lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 14
+                lbl.TextColor3 = Color3.fromRGB(200,220,240)
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                lbl.Text = pl.DisplayName .. " (" .. pl.Name .. ")"
+                TeleportButtons[pl] = b
 
-            b.MouseButton1Click:Connect(function()
-                -- safe teleport
-                local myChar = LocalPlayer.Character
-                local targetChar = pl.Character
-                if not myChar or not targetChar then return end
-                local hrp = myChar:FindFirstChild("HumanoidRootPart") or myChar:FindFirstChild("Torso") or myChar:FindFirstChild("UpperTorso")
-                local thrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("UpperTorso")
-                if not hrp or not thrp then return end
-                pcall(function() hrp.CFrame = thrp.CFrame + Vector3.new(0, 4, 0) end)
-                -- optional: close teleport window
-                TeleportGui.Visible = false
-            end)
+                b.MouseButton1Click:Connect(function()
+                    -- safe teleport
+                    local myChar = LocalPlayer.Character
+                    local targetChar = pl.Character
+                    if not myChar or not targetChar then return end
+                    local hrp = myChar:FindFirstChild("HumanoidRootPart") or myChar:FindFirstChild("Torso") or myChar:FindFirstChild("UpperTorso")
+                    local thrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("UpperTorso")
+                    if not hrp or not thrp then return end
+                    pcall(function() hrp.CFrame = thrp.CFrame + Vector3.new(0, 4, 0) end)
+                    -- optional: close teleport window
+                    if CloseOnTeleport then TeleportGui.Visible = false end
+                end)
+            end
         end
     end
-    -- ensure layout updates
+    -- ensure layout updates (use property changed signal for robust updates)
+    -- initial set; a signal below will keep CanvasSize updated automatically
     tpScroll.CanvasSize = UDim2.new(0, 0, 0, math.max(0, tpLayout.AbsoluteContentSize.Y + 12))
 end
 
+-- update canvas when layout content size changes
+tpLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    if tpScroll and tpScroll.Parent then
+        tpScroll.CanvasSize = UDim2.new(0, 0, 0, math.max(0, tpLayout.AbsoluteContentSize.Y + 12))
+    end
+end)
+
 -- keep updated
+tpSearch:GetPropertyChangedSignal("Text"):Connect(function() buildTeleportButtons() end)
 Players.PlayerAdded:Connect(function() task.wait(0.12); buildTeleportButtons() end)
 Players.PlayerRemoving:Connect(function() task.wait(0.12); buildTeleportButtons() end)
 buildTeleportButtons()
@@ -870,8 +915,10 @@ local function cleanupAll()
     if podDescendantAddConn then pcall(function() podDescendantAddConn:Disconnect() end); podDescendantAddConn = nil end
     if podDescendantRemConn then pcall(function() podDescendantRemConn:Disconnect() end); podDescendantRemConn = nil end
     if textureDescendantConn then pcall(function() textureDescendantConn:Disconnect() end); textureDescendantConn = nil end
-    -- teleport GUI cleanup
-    safeDestroy(TeleportGui)
+    -- teleport GUI cleanup (safe destroy)
+    if TeleportGui and TeleportGui.Parent then
+        pcall(function() TeleportGui:Destroy() end)
+    end
 end
 
 -- Bind PlayerRemoving to cleanup for players
