@@ -1,14 +1,15 @@
 --[[
-FTF ESP Script — consolidated version with Freeze Pods toggle
-- Tudo o que já estava: ESP jogadores, ESP computadores, ragdoll timers, gray skin, texture toggle.
-- Adicionado botão toggle "Freeze Pods" (Ativar / Desativar) que carrega o script remoto
-  https://raw.githubusercontent.com/zyn789/LemonHub/main/FleeTheFacility.lua via loadstring.
-  - Ao ativar: faz download & executa o script; se o script retornar uma função de cleanup,
-    ela será salva e chamada ao desativar.
-  - Ao desativar: tenta chamar a função de cleanup retornada; se não houver, tenta funções
-    comuns no _G; se nada estiver disponível, informa que pode ser necessário reconectar
-    (limitado por scripts externos que não expõem cleanup).
-- Mantive segurança/compatibilidade: não interrompe as outras features; atualizei UI.
+FTF ESP Script — Full integrated version with internal Freeze Pods toggle
+Features:
+- Player ESP (highlights + name tags)
+- Computer ESP (screen-color based highlights)
+- Ragdoll down timer (28s) with bottom-right UI entries
+- Gray skin toggle (applies/restores players' colors/materials)
+- Safe White Brick Texture toggle (applies to environment, skips player chars, batched)
+- Internal Freeze Pods toggle (no external scripts): freezes parts/models identified as pods
+  by name pattern (default: contains "pod", case-insensitive) or attribute if configured.
+- Polished UI, button indicators, non-blocking background processing (task.spawn & heartbeat yields)
+- Press K to open/close menu
 ]]
 
 -- Services
@@ -104,7 +105,7 @@ end
 createStartupNotice()
 
 -- ---------- Main menu frame ----------
-local gWidth, gHeight = 360, 460 -- increased height to fit Freeze button
+local gWidth, gHeight = 360, 460 -- enough height for new buttons
 local Frame = Instance.new("Frame", GUI)
 Frame.Name = "FTF_Menu_FRAME"
 Frame.BackgroundColor3 = Color3.fromRGB(8,10,14)
@@ -389,7 +390,7 @@ local skinBackup = {}
 local grayConns = {}
 
 local function storePartOriginal(part, store)
-    if not part or not part:IsA("BasePart") and not part:IsA("MeshPart") then return end
+    if not part or (not part:IsA("BasePart") and not part:IsA("MeshPart")) then return end
     if store[part] then return end
     local okC, col = pcall(function() return part.Color end)
     local okM, mat = pcall(function() return part.Material end)
@@ -523,74 +524,135 @@ local function disableTextureToggle()
     if buttonLabelMap[TextureBtn] then buttonLabelMap[TextureBtn].Text = "Ativar Texture Tijolos Brancos" end
 end
 
--- ========== FREEZE PODS TOGGLE (external script) ==========
-local FreezeActive = false
-local freezeCleanup = nil
--- prefer the canonical raw URL form
-local freezeRawURL = "https://raw.githubusercontent.com/zyn789/LemonHub/main/FleeTheFacility.lua"
+-- ========== INTERNAL FREEZE PODS (toggle) ==========
+-- Identification options:
+-- Default: match "pod" substring in model/part name (case-insensitive).
+-- You can switch to attribute-based detection by setting USE_ATTRIBUTE = true and ATTRIBUTE_NAME.
+local FREEZE_USE_ATTRIBUTE = false
+local FREEZE_ATTRIBUTE_NAME = "IsPod"
+local FREEZE_NAME_PATTERN = "pod" -- substring
 
-local function tryCallCleanup(fn)
-    if type(fn) == "function" then
-        pcall(fn)
+local FreezePodsActive = false
+local freezeBackup = {}         -- [part] = {Anchored = bool, CanCollide = bool}
+local freezeConn = nil
+
+local function isPartPlayerCharacter_local(part)
+    if not part then return false end
+    local model = part:FindFirstAncestorWhichIsA("Model")
+    if model then return Players:GetPlayerFromCharacter(model) ~= nil end
+    return false
+end
+
+local function isPodModelOrPart(inst)
+    if not inst then return false end
+    -- attribute-based detection
+    if FREEZE_USE_ATTRIBUTE then
+        local model = inst:FindFirstAncestorWhichIsA("Model")
+        if model and model:GetAttribute and model:GetAttribute(FREEZE_ATTRIBUTE_NAME) then
+            if Players:GetPlayerFromCharacter(model) then return false end -- skip player chars
+            return true
+        end
+    end
+    -- name-based detection
+    local nm = (inst.Name or ""):lower()
+    if nm:find(FREEZE_NAME_PATTERN:lower()) then
+        -- ignore player chars
+        local ancModel = inst:FindFirstAncestorWhichIsA("Model")
+        if ancModel and Players:GetPlayerFromCharacter(ancModel) then return false end
+        return true
+    end
+    -- also check ancestor model name
+    local model = inst:FindFirstAncestorWhichIsA("Model")
+    if model and (model.Name or ""):lower():find(FREEZE_NAME_PATTERN:lower()) then
+        if Players:GetPlayerFromCharacter(model) then return false end
         return true
     end
     return false
 end
 
-local function enableFreeze()
-    if FreezeActive then return end
-    FreezeActive = true
+local function saveAndFreezePart_local(part)
+    if not part or not part:IsA("BasePart") then return end
+    if isPartPlayerCharacter_local(part) then return end
+    if freezeBackup[part] then return end
+    local okA, anchored = pcall(function() return part.Anchored end)
+    local okC, cancollide = pcall(function() return part.CanCollide end)
+    freezeBackup[part] = {
+        Anchored = (okA and anchored) or false,
+        CanCollide = (okC and cancollide) or part.CanCollide
+    }
+    pcall(function()
+        -- stop linear/angular velocity (best-effort)
+        if pcall(function() part.AssemblyLinearVelocity = Vector3.new(0,0,0) end) then end
+        if pcall(function() part.AssemblyAngularVelocity = Vector3.new(0,0,0) end) then end
+        part.Anchored = true
+    end)
+end
+
+local function applyFreezeToAllPods()
+    local desc = Workspace:GetDescendants()
+    local batch = 0
+    for i = 1, #desc do
+        local d = desc[i]
+        if d and d:IsA("BasePart") then
+            if isPodModelOrPart(d) then
+                saveAndFreezePart_local(d)
+            end
+            batch = batch + 1
+            if batch >= 200 then batch = 0; RunService.Heartbeat:Wait() end
+        end
+    end
+end
+
+local function onWorkspaceDescendantAdded_local(desc)
+    if not FreezePodsActive then return end
+    if not desc then return end
+    if desc:IsA("Model") then
+        if isPodModelOrPart(desc) then
+            for _, child in ipairs(desc:GetDescendants()) do
+                if child:IsA("BasePart") then saveAndFreezePart_local(child) end
+            end
+            return
+        end
+    end
+    if desc:IsA("BasePart") and isPodModelOrPart(desc) then
+        task.defer(function() saveAndFreezePart_local(desc) end)
+    end
+end
+
+local function restoreFrozenParts()
+    local parts = {}
+    for part, props in pairs(freezeBackup) do parts[#parts+1] = {part=part, props=props} end
+    local batch = 0
+    for _, e in ipairs(parts) do
+        local p = e.part
+        local props = e.props
+        if p and p.Parent then
+            pcall(function()
+                if props.Anchored ~= nil then p.Anchored = props.Anchored end
+                if props.CanCollide ~= nil then p.CanCollide = props.CanCollide end
+            end)
+        end
+        batch = batch + 1
+        if batch >= 200 then batch = 0; RunService.Heartbeat:Wait() end
+    end
+    freezeBackup = {}
+end
+
+local function enableFreezePods()
+    if FreezePodsActive then return end
+    FreezePodsActive = true
     FreezeIndicator.BackgroundColor3 = Color3.fromRGB(240,180,255)
     TweenService:Create(FreezeIndicator, TweenInfo.new(0.18), {Size = UDim2.new(0.78,0,0.72,0), Position = UDim2.new(0.11,0,0.14,0)}):Play()
-    -- attempt to download & execute; capture returned cleanup function if any
-    task.spawn(function()
-        local ok, ret = pcall(function()
-            local code = game:HttpGet(freezeRawURL, true)
-            local chunk = loadstring(code)
-            if chunk then
-                return chunk()
-            end
-        end)
-        if ok and type(ret) == "function" then
-            freezeCleanup = ret
-        else
-            -- ret may be nil or not a function; keep freezeCleanup as-is (nil)
-            freezeCleanup = freezeCleanup -- no-op
-        end
-    end)
+    task.spawn(applyFreezeToAllPods)
+    freezeConn = Workspace.DescendantAdded:Connect(onWorkspaceDescendantAdded_local)
     if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Desativar Freeze Pods" end
 end
 
-local function disableFreeze()
-    if not FreezeActive then return end
-    FreezeActive = false
-    -- try cleanup function returned by script
-    local cleaned = false
-    if freezeCleanup and type(freezeCleanup) == "function" then
-        pcall(freezeCleanup)
-        cleaned = true
-        freezeCleanup = nil
-    end
-    -- attempt some common global cleanup names (best-effort)
-    if not cleaned then
-        pcall(function()
-            if _G and type(_G.FleeTheFacility) == "table" and type(_G.FleeTheFacility.Destroy) == "function" then
-                _G.FleeTheFacility.Destroy()
-                cleaned = true
-            elseif _G and type(_G.FleeTheFacility) == "function" then
-                pcall(_G.FleeTheFacility)
-                cleaned = true
-            elseif _G and type(_G.LemonHub) == "table" and type(_G.LemonHub.Cleanup) == "function" then
-                _G.LemonHub.Cleanup()
-                cleaned = true
-            end
-        end)
-    end
-    -- if still not cleaned, we can't reliably remove external script — inform in console
-    if not cleaned then
-        warn("[FTF_ESP] Não foi possível limpar automaticamente o script Freeze Pods. Se o script não expor uma função de cleanup, pode ser necessário reconectar para remover.")
-    end
-
+local function disableFreezePods()
+    if not FreezePodsActive then return end
+    FreezePodsActive = false
+    if freezeConn then pcall(function() freezeConn:Disconnect() end); freezeConn = nil end
+    task.spawn(restoreFrozenParts)
     FreezeIndicator.BackgroundColor3 = Color3.fromRGB(90,160,220)
     TweenService:Create(FreezeIndicator, TweenInfo.new(0.22), {Size = UDim2.new(0.38,0,0.5,0), Position = UDim2.new(0.06,0,0.25,0)}):Play()
     if buttonLabelMap[FreezeBtn] then buttonLabelMap[FreezeBtn].Text = "Ativar Freeze Pods" end
@@ -633,14 +695,14 @@ TextureBtn.MouseButton1Click:Connect(function()
 end)
 
 FreezeBtn.MouseButton1Click:Connect(function()
-    if not FreezeActive then enableFreeze() else disableFreeze() end
+    if not FreezePodsActive then enableFreezePods() else disableFreezePods() end
 end)
 
 -- Cleanup on unload (best effort)
 local function cleanupAll()
     if TextureActive then disableTextureToggle() end
     if GraySkinActive then disableGraySkin() end
-    if FreezeActive then disableFreeze() end
+    if FreezePodsActive then disableFreezePods() end
     for p,_ in pairs(playerHighlights) do RemovePlayerHighlight(p) end
     for p,_ in pairs(NameTags) do RemoveNameTag(p) end
 end
