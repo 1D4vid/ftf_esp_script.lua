@@ -1,32 +1,34 @@
--- RunnerCooldownBottomRight.local.lua
+-- RunnerCooldownBottomRightFixed.local.lua
 -- LocalScript -> colocar em StarterPlayerScripts
--- O que faz:
---  - Menu minimalista (L) com toggle "Contador de tempo (runner)"
+-- Funcionalidades:
+--  - Menu minimalista (tecla L) com toggle "Contador de tempo (runner)"
 --  - Labels grandes e visíveis acima da cabeça dos outros jogadores (AlwaysOnTop, MaxDistance alto)
---  - Indicador de cooldown do BeastPower no canto inferior direito (sem fundo, apenas texto)
---  - Atualização reativa (NumberValue.Changed) e limpeza ao terminar partida / desativar
---  - Esconde automaticamente quando a partida termina (se detectado BoolValue comum de estado de partida)
+--  - Indicador minimalista e elegante no canto inferior direito (sem fundo, apenas texto):
+--      linha 1: "BeastPower Cooldown"
+--      linha 2: tempo em segundos (atualiza automaticamente)
+--  - Usa atualização reativa (NumberValue.Changed) para ambos: head labels e cooldown local
+--  - Esconde o indicador quando a partida termina (se detectado BoolValue de estado de partida)
+-- Cole este arquivo em StarterPlayerScripts como LocalScript.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- Root ScreenGui
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RunnerCooldownBR_GUI"
+screenGui.Name = "RunnerCooldownBR_FixedGUI"
 screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 3000
+screenGui.DisplayOrder = 4000 -- alto para garantir visibilidade
 screenGui.IgnoreGuiInset = true
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = PlayerGui
 
 -- Helpers
 local function tween(inst, props, info)
-    info = info or TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    info = info or TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     TweenService:Create(inst, info, props):Play()
 end
 
@@ -37,11 +39,11 @@ local function makeCorner(parent, radius)
     return c
 end
 
-local function makeStroke(parent, thickness, transparency)
+local function makeStroke(parent, thickness, transparency, color)
     local s = Instance.new("UIStroke")
-    s.Thickness = thickness or 1
+    s.Thickness = thickness or 1.6
     s.Transparency = (transparency ~= nil) and transparency or 0.45
-    s.Color = Color3.fromRGB(0,0,0)
+    s.Color = color or Color3.fromRGB(0,0,0)
     s.Parent = parent
     return s
 end
@@ -59,67 +61,53 @@ local function formatSeconds(n)
     end
 end
 
--- Minimal hint (bottom center)
-local hint = Instance.new("Frame")
-hint.Name = "MinimalHint"
+-- ========== Minimal menu / hint (unchanged, small) ==========
+local hint = Instance.new("TextLabel")
+hint.Name = "Hint"
 hint.AnchorPoint = Vector2.new(0.5, 1)
-hint.Size = UDim2.new(0, 220, 0, 30)
+hint.Size = UDim2.new(0, 220, 0, 28)
 hint.Position = UDim2.new(0.5, 0, 1, -18)
-hint.BackgroundColor3 = Color3.fromRGB(28,30,34)
-hint.BorderSizePixel = 0
-hint.Parent = screenGui
-makeCorner(hint, 8)
-hint.ZIndex = 100
 hint.BackgroundTransparency = 1
+hint.Text = 'Pressione "L" para abrir o menu'
+hint.Font = Enum.Font.SourceSansSemibold
+hint.TextSize = 14
+hint.TextColor3 = Color3.fromRGB(240,240,240)
+hint.TextScaled = true
+hint.TextXAlignment = Enum.TextXAlignment.Center
+hint.ZIndex = 50
+hint.Parent = screenGui
 
-local hintText = Instance.new("TextLabel")
-hintText.Name = "HintText"
-hintText.Size = UDim2.new(1, -16, 1, 0)
-hintText.Position = UDim2.new(0, 8, 0, 0)
-hintText.BackgroundTransparency = 1
-hintText.Font = Enum.Font.SourceSansSemibold
-hintText.TextSize = 14
-hintText.TextScaled = true
-hintText.Text = 'Pressione "L" para abrir o menu'
-hintText.TextColor3 = Color3.fromRGB(240,240,240)
-hintText.TextXAlignment = Enum.TextXAlignment.Left
-hintText.Parent = hint
-makeStroke(hintText, 0.9, 0.6)
-
--- Menu (compact)
 local menu = Instance.new("Frame")
 menu.Name = "RunnerMenu"
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
-menu.Size = UDim2.new(0, 320, 0, 140)
+menu.Size = UDim2.new(0, 340, 0, 132)
 menu.Position = UDim2.new(0.5, 0, 0.45, 0)
 menu.BackgroundColor3 = Color3.fromRGB(18,18,20)
 menu.BorderSizePixel = 0
+menu.Visible = false
+menu.ZIndex = 60
 menu.Parent = screenGui
 makeCorner(menu, 12)
-menu.ZIndex = 110
-menu.Visible = false
 
 local title = Instance.new("TextLabel")
-title.Name = "Title"
 title.Size = UDim2.new(1, -24, 0, 28)
 title.Position = UDim2.new(0, 12, 0, 12)
 title.BackgroundTransparency = 1
 title.Font = Enum.Font.SourceSansBold
 title.TextSize = 18
-title.Text = "Runner"
 title.TextColor3 = Color3.fromRGB(245,245,245)
+title.Text = "Runner"
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = menu
 
 local subtitle = Instance.new("TextLabel")
-subtitle.Name = "Subtitle"
 subtitle.Size = UDim2.new(1, -24, 0, 16)
-subtitle.Position = UDim2.new(0, 12, 0, 40)
+subtitle.Position = UDim2.new(0, 12, 0, 42)
 subtitle.BackgroundTransparency = 1
 subtitle.Font = Enum.Font.SourceSans
 subtitle.TextSize = 12
-subtitle.Text = "Controles de exibição"
 subtitle.TextColor3 = Color3.fromRGB(170,170,170)
+subtitle.Text = "Controles de exibição"
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
 subtitle.Parent = menu
 
@@ -140,7 +128,6 @@ label.TextXAlignment = Enum.TextXAlignment.Left
 label.Parent = row
 
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Name = "Toggle"
 toggleBtn.Size = UDim2.new(0.3, 0, 0.72, 0)
 toggleBtn.Position = UDim2.new(0.7, 0, 0.14, 0)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 0, 0)
@@ -152,49 +139,8 @@ toggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
 toggleBtn.Parent = row
 makeCorner(toggleBtn, 8)
 
--- Bottom-right cooldown label (no background, only text)
-local cooldownLabel = Instance.new("TextLabel")
-cooldownLabel.Name = "BeastPowerCooldownLabel"
-cooldownLabel.AnchorPoint = Vector2.new(1, 1)
-cooldownLabel.Size = UDim2.new(0, 220, 0, 44)
-cooldownLabel.Position = UDim2.new(1, -12, 1, -12) -- bottom-right inset
-cooldownLabel.BackgroundTransparency = 1
-cooldownLabel.Text = ""
-cooldownLabel.Font = Enum.Font.SourceSansBold
-cooldownLabel.TextScaled = true
-cooldownLabel.TextSize = 22
-cooldownLabel.TextColor3 = Color3.fromRGB(255,255,255)
-cooldownLabel.TextXAlignment = Enum.TextXAlignment.Right
-cooldownLabel.TextYAlignment = Enum.TextYAlignment.Center
-cooldownLabel.ZIndex = 300
-cooldownLabel.Parent = screenGui
--- stroke for readability
-makeStroke(cooldownLabel, 2, 0.45)
-cooldownLabel.Visible = false
-
--- Runner state
-local runnerEnabled = false
-local state = {
-    perPlayer = {}, -- [player] = { charConn, beastAddedConn, beastRemovedConn, beastChildConn, numberConn }
-    playersConn = nil,
-    matchStateObj = nil,
-    matchStateConn = nil,
-    localCooldownConn = nil,
-    localBeastChildConn = nil,
-    localBeastRemovedConn = nil
-}
-
--- Create/destroy head label
-local function destroyBillboardFromCharacter(character)
-    if not character then return end
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        local bb = hrp:FindFirstChild("BeastPowerBillboard")
-        if bb then bb:Destroy() end
-    end
-end
-
-local function createBillboardLabel(player)
+-- ========== Head labels (other players) ==========
+local function createBillboardLabelForPlayer(player)
     if not player or player == LocalPlayer then return nil end
     if not player.Character then return nil end
     local char = player.Character
@@ -205,55 +151,66 @@ local function createBillboardLabel(player)
     if not bb then
         bb = Instance.new("BillboardGui")
         bb.Name = "BeastPowerBillboard"
-        -- larger + higher
-        bb.Size = UDim2.new(3.0, 0, 1.8, 0)
+        bb.Parent = hrp
+        -- bigger and higher
+        bb.Size = UDim2.new(3.2, 0, 1.8, 0)
         bb.StudsOffset = Vector3.new(0, 5.2, 0)
         bb.AlwaysOnTop = true
         bb.LightInfluence = 0
         bb.MaxDistance = 1e6
-        bb.Parent = hrp
+    end
 
-        local txt = Instance.new("TextLabel")
+    local txt = bb:FindFirstChild("BeastPowerLabel")
+    if not txt then
+        txt = Instance.new("TextLabel")
         txt.Name = "BeastPowerLabel"
         txt.Size = UDim2.new(1, 0, 1, 0)
         txt.BackgroundTransparency = 1
         txt.Font = Enum.Font.SourceSansBold
-        txt.TextSize = 28
         txt.TextScaled = true
         txt.TextWrapped = true
-        txt.Text = ""
         txt.TextColor3 = Color3.fromRGB(255,255,255)
-        txt.TextTransparency = 0
+        txt.Text = ""
         txt.TextXAlignment = Enum.TextXAlignment.Center
         txt.TextYAlignment = Enum.TextYAlignment.Center
         txt.Parent = bb
-
-        local stroke = Instance.new("UIStroke")
-        stroke.Thickness = 2
-        stroke.Transparency = 0.45
-        stroke.Color = Color3.fromRGB(0,0,0)
-        stroke.Parent = txt
+        makeStroke(txt, 2, 0.45, Color3.fromRGB(0,0,0))
     end
 
-    return bb:FindFirstChild("BeastPowerLabel")
+    return txt
 end
 
--- Reactive connection for other players: find BeastPowers.NumberValue and update label
+-- Manage reactive updates per player
+local state = {
+    perPlayer = {}, -- [player] = { charConn, beastAdded, beastRemoved, beastChildConn, numberConn }
+    playersConn = nil,
+    runnerEnabled = false
+}
+
+local function destroyHeadBillboard(character)
+    if not character then return end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local bb = hrp:FindFirstChild("BeastPowerBillboard")
+        if bb then bb:Destroy() end
+    end
+end
+
 local function connectReactiveForCharacter(player, character)
     if not player or not character then return end
     state.perPlayer[player] = state.perPlayer[player] or {}
     local entry = state.perPlayer[player]
 
-    -- cleanup
+    -- cleanup old
     if entry.numberConn then entry.numberConn:Disconnect() entry.numberConn = nil end
-    if entry.beastAddedConn then entry.beastAddedConn:Disconnect() entry.beastAddedConn = nil end
-    if entry.beastRemovedConn then entry.beastRemovedConn:Disconnect() entry.beastRemovedConn = nil end
+    if entry.beastAdded then entry.beastAdded:Disconnect() entry.beastAdded = nil end
+    if entry.beastRemoved then entry.beastRemoved:Disconnect() entry.beastRemoved = nil end
     if entry.beastChildConn then entry.beastChildConn:Disconnect() entry.beastChildConn = nil end
 
-    local function tryConnectNumber()
+    local function tryConnect()
         if not character or not character.Parent then return end
         local beast = character:FindFirstChild("BeastPowers")
-        local label = createBillboardLabel(player)
+        local label = createBillboardLabelForPlayer(player)
         if beast then
             local nv = beast:FindFirstChildOfClass("NumberValue")
             if nv then
@@ -263,10 +220,11 @@ local function connectReactiveForCharacter(player, character)
                 end)
             else
                 if label then label.Text = "" end
+                -- wait for NumberValue inside BeastPowers
                 entry.beastChildConn = beast.ChildAdded:Connect(function(child)
                     if child:IsA("NumberValue") then
                         task.wait(0.02)
-                        tryConnectNumber()
+                        tryConnect()
                     end
                 end)
             end
@@ -275,25 +233,25 @@ local function connectReactiveForCharacter(player, character)
         end
     end
 
-    entry.beastAddedConn = character.ChildAdded:Connect(function(child)
+    entry.beastAdded = character.ChildAdded:Connect(function(child)
         if child.Name == "BeastPowers" then
             task.wait(0.04)
-            tryConnectNumber()
+            tryConnect()
         end
     end)
-    entry.beastRemovedConn = character.ChildRemoved:Connect(function(child)
+    entry.beastRemoved = character.ChildRemoved:Connect(function(child)
         if child.Name == "BeastPowers" then
             if entry.numberConn then entry.numberConn:Disconnect() entry.numberConn = nil end
             if entry.beastChildConn then entry.beastChildConn:Disconnect() entry.beastChildConn = nil end
-            local label = createBillboardLabel(player)
+            local label = createBillboardLabelForPlayer(player)
             if label then label.Text = "" end
         end
     end)
 
-    tryConnectNumber()
+    tryConnect()
 end
 
-local function attachPlayerListeners()
+local function attachAllPlayers()
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer then
             state.perPlayer[pl] = state.perPlayer[pl] or {}
@@ -301,20 +259,83 @@ local function attachPlayerListeners()
                 state.perPlayer[pl].charConn:Disconnect()
                 state.perPlayer[pl].charConn = nil
             end
-            state.perPlayer[pl].charConn = pl.CharacterAdded:Connect(function(char)
+            state.perPlayer[pl].charConn = pl.CharacterAdded:Connect(function(c)
                 task.wait(0.35)
-                createBillboardLabel(pl)
-                connectReactiveForCharacter(pl, char)
+                createBillboardLabelForPlayer(pl)
+                connectReactiveForCharacter(pl, c)
             end)
             if pl.Character then
-                createBillboardLabel(pl)
+                createBillboardLabelForPlayer(pl)
                 connectReactiveForCharacter(pl, pl.Character)
             end
         end
     end
 end
 
--- Local player's cooldown: find NumberValue inside LocalPlayer.Character.BeastPowers
+local function cleanupHeads()
+    for pl, entry in pairs(state.perPlayer) do
+        if entry.charConn then entry.charConn:Disconnect() end
+        if entry.beastAdded then entry.beastAdded:Disconnect() end
+        if entry.beastRemoved then entry.beastRemoved:Disconnect() end
+        if entry.beastChildConn then entry.beastChildConn:Disconnect() end
+        if entry.numberConn then entry.numberConn:Disconnect() end
+        state.perPlayer[pl] = nil
+    end
+    if state.playersConn then state.playersConn:Disconnect() state.playersConn = nil end
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl.Character then destroyHeadBillboard(pl.Character) end
+    end
+end
+
+-- ========== Bottom-right cooldown (minimal, no background) ==========
+-- Container is transparent; it only holds two TextLabels stacked.
+local cooldownContainer = Instance.new("Frame")
+cooldownContainer.Name = "CooldownContainer"
+cooldownContainer.AnchorPoint = Vector2.new(1, 1)
+cooldownContainer.Size = UDim2.new(0, 220, 0, 44)
+cooldownContainer.Position = UDim2.new(1, -16, 1, -12) -- bottom-right inset
+cooldownContainer.BackgroundTransparency = 1
+cooldownContainer.BorderSizePixel = 0
+cooldownContainer.ZIndex = 500
+cooldownContainer.Parent = screenGui
+
+-- title (small)
+local cooldownTitle = Instance.new("TextLabel")
+cooldownTitle.Name = "CooldownTitle"
+cooldownTitle.Size = UDim2.new(1, 0, 0, 18)
+cooldownTitle.Position = UDim2.new(0, 0, 0, 0)
+cooldownTitle.BackgroundTransparency = 1
+cooldownTitle.Font = Enum.Font.SourceSansSemibold
+cooldownTitle.TextSize = 14
+cooldownTitle.TextScaled = true
+cooldownTitle.Text = "BeastPower Cooldown"
+cooldownTitle.TextColor3 = Color3.fromRGB(245,245,245)
+cooldownTitle.TextXAlignment = Enum.TextXAlignment.Right
+cooldownTitle.TextYAlignment = Enum.TextYAlignment.Center
+cooldownTitle.Parent = cooldownContainer
+makeStroke(cooldownTitle, 1.6, 0.45, Color3.fromRGB(0,0,0))
+
+-- value (large)
+local cooldownValue = Instance.new("TextLabel")
+cooldownValue.Name = "CooldownValue"
+cooldownValue.Size = UDim2.new(1, 0, 0, 26)
+cooldownValue.Position = UDim2.new(0, 0, 0, 18)
+cooldownValue.BackgroundTransparency = 1
+cooldownValue.Font = Enum.Font.SourceSansBold
+cooldownValue.TextSize = 22
+cooldownValue.TextScaled = true
+cooldownValue.Text = "0s"
+cooldownValue.TextColor3 = Color3.fromRGB(255,255,255)
+cooldownValue.TextXAlignment = Enum.TextXAlignment.Right
+cooldownValue.TextYAlignment = Enum.TextYAlignment.Center
+cooldownValue.Parent = cooldownContainer
+makeStroke(cooldownValue, 2, 0.45, Color3.fromRGB(0,0,0))
+
+-- hide initially
+cooldownContainer.Visible = false
+
+-- Helpers to find cooldown NumberValue inside LocalPlayer.Character.BeastPowers
 local function findLocalCooldownNumberValue()
     local char = LocalPlayer.Character
     if not char then return nil end
@@ -326,34 +347,33 @@ local function findLocalCooldownNumberValue()
         local nv = beast:FindFirstChild(name)
         if nv and nv:IsA("NumberValue") then return nv end
     end
+    -- fallback: first NumberValue
     return beast:FindFirstChildOfClass("NumberValue")
 end
 
+-- Local cooldown connection management
+local localCooldownConn = nil
+local localBeastChildConn = nil
+local localBeastRemovedConn = nil
+
+local function disconnectLocalCooldownConns()
+    if localCooldownConn then localCooldownConn:Disconnect() localCooldownConn = nil end
+    if localBeastChildConn then localBeastChildConn:Disconnect() localBeastChildConn = nil end
+    if localBeastRemovedConn then localBeastRemovedConn:Disconnect() localBeastRemovedConn = nil end
+end
+
 local function connectLocalCooldown()
-    -- cleanup previous connections
-    if state.localCooldownConn then
-        state.localCooldownConn:Disconnect()
-        state.localCooldownConn = nil
-    end
-    if state.localBeastChildConn then
-        state.localBeastChildConn:Disconnect()
-        state.localBeastChildConn = nil
-    end
-    if state.localBeastRemovedConn then
-        state.localBeastRemovedConn:Disconnect()
-        state.localBeastRemovedConn = nil
-    end
+    disconnectLocalCooldownConns()
+    cooldownContainer.Visible = false
 
     local char = LocalPlayer.Character
-    if not char then
-        cooldownLabel.Visible = false
-        return
-    end
+    if not char then return end
 
     local beast = char:FindFirstChild("BeastPowers")
     if not beast then
-        cooldownLabel.Visible = false
-        state.localBeastChildConn = char.ChildAdded:Connect(function(child)
+        -- wait for BeastPowers
+        cooldownContainer.Visible = false
+        localBeastChildConn = char.ChildAdded:Connect(function(child)
             if child.Name == "BeastPowers" then
                 task.wait(0.02)
                 connectLocalCooldown()
@@ -364,48 +384,50 @@ local function connectLocalCooldown()
 
     local nv = findLocalCooldownNumberValue()
     if not nv then
-        cooldownLabel.Visible = false
-        -- listen for NumberValue created inside BeastPowers
-        state.localBeastChildConn = beast.ChildAdded:Connect(function(child)
+        -- wait for NumberValue inside BeastPowers
+        cooldownContainer.Visible = false
+        localBeastChildConn = beast.ChildAdded:Connect(function(child)
             if child:IsA("NumberValue") then
                 task.wait(0.02)
                 connectLocalCooldown()
             end
         end)
-        -- if BeastPowers removed, hide
-        state.localBeastRemovedConn = char.ChildRemoved:Connect(function(child)
+        localBeastRemovedConn = char.ChildRemoved:Connect(function(child)
             if child == beast then
-                cooldownLabel.Visible = false
+                cooldownContainer.Visible = false
             end
         end)
         return
     end
 
-    -- found NV: show label and connect
-    cooldownLabel.Visible = true
-    cooldownLabel.Text = formatSeconds(nv.Value)
-    state.localCooldownConn = nv.Changed:Connect(function()
+    -- found NV
+    cooldownContainer.Visible = true
+    cooldownValue.Text = formatSeconds(nv.Value)
+    localCooldownConn = nv.Changed:Connect(function()
         if nv.Parent then
-            cooldownLabel.Text = formatSeconds(nv.Value)
+            cooldownValue.Text = formatSeconds(nv.Value)
         else
-            cooldownLabel.Text = "0s"
+            cooldownValue.Text = "0s"
         end
     end)
 
-    -- hide when BeastPowers removed
-    state.localBeastRemovedConn = char.ChildRemoved:Connect(function(child)
+    -- if BeastPowers removed, hide
+    localBeastRemovedConn = char.ChildRemoved:Connect(function(child)
         if child == beast then
-            if state.localCooldownConn then state.localCooldownConn:Disconnect() state.localCooldownConn = nil end
-            cooldownLabel.Visible = false
+            disconnectLocalCooldownConns()
+            cooldownContainer.Visible = false
         end
     end)
 end
 
--- Match detection (search common BoolValue names) to hide labels when match ends
+-- Match detection to hide UI when match ends (search common BoolValue names)
+local matchStateObj = nil
+local matchStateConn = nil
+
 local function findMatchStateBool()
-    local searchContainers = {workspace, ReplicatedStorage, game:GetService("ServerStorage")}
+    local containers = {workspace, game:GetService("ReplicatedStorage"), game:GetService("ServerStorage")}
     local names = {"MatchInProgress", "MatchActive", "RoundActive", "MatchFinished", "GameActive", "GameFinished", "RoundRunning"}
-    for _, container in ipairs(searchContainers) do
+    for _, container in ipairs(containers) do
         if container then
             for _, name in ipairs(names) do
                 local obj = container:FindFirstChild(name, true)
@@ -419,17 +441,18 @@ local function findMatchStateBool()
 end
 
 local function onMatchStateChanged()
-    local m = state.matchStateObj
-    if not m then return end
-    -- Assumption: true -> active, false -> finished
-    if m.Value == false then
-        -- hide cooldown and destroy head labels
-        cooldownLabel.Visible = false
+    if not matchStateObj then return end
+    if matchStateObj.Value == false then
+        -- match finished
+        cooldownContainer.Visible = false
+        -- clear head labels
         for _, pl in ipairs(Players:GetPlayers()) do
-            if pl.Character then destroyBillboardFromCharacter(pl.Character) end
+            if pl.Character then
+                destroyHeadBillboard(pl.Character)
+            end
         end
     else
-        -- match active -> reconnect local cooldown
+        -- match active
         connectLocalCooldown()
     end
 end
@@ -437,95 +460,96 @@ end
 local function tryFindMatchState()
     local obj = findMatchStateBool()
     if obj then
-        state.matchStateObj = obj
-        if state.matchStateConn then state.matchStateConn:Disconnect() state.matchStateConn = nil end
-        state.matchStateConn = obj.Changed:Connect(onMatchStateChanged)
+        matchStateObj = obj
+        if matchStateConn then matchStateConn:Disconnect() matchStateConn = nil end
+        matchStateConn = obj.Changed:Connect(onMatchStateChanged)
         onMatchStateChanged()
     end
 end
 
--- Cleanup
-local function cleanupAll()
-    for pl, entry in pairs(state.perPlayer) do
-        if entry.charConn then entry.charConn:Disconnect() end
-        if entry.beastAddedConn then entry.beastAddedConn:Disconnect() end
-        if entry.beastRemovedConn then entry.beastRemovedConn:Disconnect() end
-        if entry.beastChildConn then entry.beastChildConn:Disconnect() end
-        if entry.numberConn then entry.numberConn:Disconnect() end
-        state.perPlayer[pl] = nil
-    end
-    if state.playersConn then state.playersConn:Disconnect() state.playersConn = nil end
-
-    if state.localCooldownConn then state.localCooldownConn:Disconnect() state.localCooldownConn = nil end
-    if state.localBeastChildConn then state.localBeastChildConn:Disconnect() state.localBeastChildConn = nil end
-    if state.localBeastRemovedConn then state.localBeastRemovedConn:Disconnect() state.localBeastRemovedConn = nil end
-
-    if state.matchStateConn then state.matchStateConn:Disconnect() state.matchStateConn = nil end
-    state.matchStateObj = nil
-
-    cooldownLabel.Visible = false
-
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl.Character then destroyBillboardFromCharacter(pl.Character) end
-    end
-end
-
--- Enable / Disable runner
+-- ========== Runner enable/disable and cleanup ==========
 local function enableRunner()
-    if runnerEnabled then return end
-    runnerEnabled = true
+    if state.runnerEnabled then return end
+    state.runnerEnabled = true
     toggleBtn.BackgroundColor3 = Color3.fromRGB(0,160,90)
     toggleBtn.Text = "ON"
 
+    -- players
     state.playersConn = Players.PlayerAdded:Connect(function(pl)
         task.wait(0.25)
         if pl ~= LocalPlayer then
             state.perPlayer[pl] = state.perPlayer[pl] or {}
             state.perPlayer[pl].charConn = pl.CharacterAdded:Connect(function(c)
                 task.wait(0.35)
-                createBillboardLabel(pl)
+                createBillboardLabelForPlayer(pl)
                 connectReactiveForCharacter(pl, c)
             end)
             if pl.Character then
-                createBillboardLabel(pl)
+                createBillboardLabelForPlayer(pl)
                 connectReactiveForCharacter(pl, pl.Character)
             end
         end
     end)
 
-    -- attach existing
+    -- attach existing players
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer then
             state.perPlayer[pl] = state.perPlayer[pl] or {}
             state.perPlayer[pl].charConn = pl.CharacterAdded:Connect(function(c)
                 task.wait(0.35)
-                createBillboardLabel(pl)
+                createBillboardLabelForPlayer(pl)
                 connectReactiveForCharacter(pl, c)
             end)
             if pl.Character then
-                createBillboardLabel(pl)
+                createBillboardLabelForPlayer(pl)
                 connectReactiveForCharacter(pl, pl.Character)
             end
         end
     end
 
-    -- connect local cooldown for local player
+    -- local cooldown
     connectLocalCooldown()
-
-    -- try to find match state (and connect)
+    -- try match detection
     tryFindMatchState()
 end
 
 local function disableRunner()
-    if not runnerEnabled then return end
-    runnerEnabled = false
+    if not state.runnerEnabled then return end
+    state.runnerEnabled = false
     toggleBtn.BackgroundColor3 = Color3.fromRGB(170,0,0)
     toggleBtn.Text = "OFF"
-    cleanupAll()
+
+    -- cleanup per-player
+    for pl, entry in pairs(state.perPlayer) do
+        if entry.charConn then entry.charConn:Disconnect() end
+        if entry.beastAdded then entry.beastAdded:Disconnect() end
+        if entry.beastRemoved then entry.beastRemoved:Disconnect() end
+        if entry.beastChildConn then entry.beastChildConn:Disconnect() end
+        if entry.numberConn then entry.numberConn:Disconnect() end
+        state.perPlayer[pl] = nil
+    end
+    if state.playersConn then state.playersConn:Disconnect() state.playersConn = nil end
+
+    -- local cooldown cleanup
+    disconnectLocalCooldownConns()
+    cooldownContainer.Visible = false
+
+    -- match state cleanup
+    if matchStateConn then matchStateConn:Disconnect() matchStateConn = nil end
+    matchStateObj = nil
+
+    -- destroy head billboards
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl.Character then destroyHeadBillboard(pl.Character) end
+    end
 end
 
 toggleBtn.MouseButton1Click:Connect(function()
-    if runnerEnabled then disableRunner() else enableRunner() end
+    if state.runnerEnabled then
+        disableRunner()
+    else
+        enableRunner()
+    end
 end)
 
 -- Menu toggle with L
@@ -538,32 +562,32 @@ UserInputService.InputBegan:Connect(function(input, gp)
             menu.Visible = true
             menu.Position = UDim2.new(0.5, 0, 0.35, 0)
             menu.BackgroundTransparency = 1
-            tween(menu, {Position = UDim2.new(0.5, 0, 0.45, 0), BackgroundTransparency = 0}, TweenInfo.new(0.18))
+            tween(menu, {Position = UDim2.new(0.5, 0, 0.45, 0), BackgroundTransparency = 0}, TweenInfo.new(0.14))
         else
-            tween(menu, {Position = UDim2.new(0.5, 0, 0.38, 0), BackgroundTransparency = 1}, TweenInfo.new(0.14))
-            task.delay(0.14, function() if menu then menu.Visible = false end end)
+            tween(menu, {Position = UDim2.new(0.5, 0, 0.38, 0), BackgroundTransparency = 1}, TweenInfo.new(0.12))
+            task.delay(0.12, function() if menu then menu.Visible = false end end)
         end
     end
 end)
 
--- Show hint animation (small)
+-- Hint animation (show 5s)
 task.spawn(function()
     task.wait(0.12)
     hint.Position = UDim2.new(0.5, 0, 1, 12)
-    hint.BackgroundTransparency = 1
-    tween(hint, {Position = UDim2.new(0.5, 0, 1, -18), BackgroundTransparency = 0}, TweenInfo.new(0.18))
+    hint.TextTransparency = 1
+    tween(hint, {Position = UDim2.new(0.5, 0, 1, -18), TextTransparency = 0}, TweenInfo.new(0.14))
     task.wait(5)
-    tween(hint, {Position = UDim2.new(0.5, 0, 1, 28), BackgroundTransparency = 1}, TweenInfo.new(0.16))
-    task.delay(0.16, function() if hint and hint.Parent then hint:Destroy() end end)
+    tween(hint, {Position = UDim2.new(0.5, 0, 1, 28), TextTransparency = 1}, TweenInfo.new(0.12))
+    task.delay(0.12, function() if hint and hint.Parent then hint:Destroy() end end)
 end)
 
--- Cleanup when player leaves
+-- Cleanup on player leaving
 Players.PlayerRemoving:Connect(function(pl)
     local e = state.perPlayer[pl]
     if e then
         if e.charConn then e.charConn:Disconnect() end
-        if e.beastAddedConn then e.beastAddedConn:Disconnect() end
-        if e.beastRemovedConn then e.beastRemovedConn:Disconnect() end
+        if e.beastAdded then e.beastAdded:Disconnect() end
+        if e.beastRemoved then e.beastRemoved:Disconnect() end
         if e.beastChildConn then e.beastChildConn:Disconnect() end
         if e.numberConn then e.numberConn:Disconnect() end
         state.perPlayer[pl] = nil
@@ -572,11 +596,10 @@ end)
 
 -- Reconnect local cooldown on respawn while runner enabled
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.2)
-    if runnerEnabled then
+    task.wait(0.18)
+    if state.runnerEnabled then
         connectLocalCooldown()
     end
 end)
 
--- Try initial match detection
-tryFindMatchState()
+-- End of script
