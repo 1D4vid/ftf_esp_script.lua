@@ -6,7 +6,7 @@ local TweenService = game:GetService("TweenService")
 
 local localPlayer = Players.LocalPlayer
 local progressEnabled = true
-local SHOW_DISTANCE = 25 -- distância para mostrar a barra
+local SHOW_DISTANCE = 35 -- distância para mostrar a barra
 
 -- ==================================
 -- MENU MODERNO, ELEGANTE E FUNCIONAL
