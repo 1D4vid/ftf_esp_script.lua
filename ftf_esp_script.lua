@@ -1,7 +1,4 @@
 -- FTF ESP — By David
--- Integrated Contador de Down, BeastPower Time and Computer ProgressBar (toggleable)
--- Updated: Computer ESP replaced with the method you provided (fixed), menu/draggable/UI kept as requested.
-
 local ICON_IMAGE_ID = ""
 local DOWN_COUNT_DURATION = 28
 local REMOVE_TEXTURES_BATCH = 250
@@ -52,7 +49,6 @@ ScreenGui.IgnoreGuiInset = true
 pcall(function() ScreenGui.Parent = CoreGui end)
 if not ScreenGui.Parent or ScreenGui.Parent ~= CoreGui then ScreenGui.Parent = PlayerGui end
 
--- Generic highlight creator (used by several features)
 local function createHighlight(adornee, fillColor, outlineColor, fillTrans, outlineTrans)
     if not adornee then return nil end
     local h = Instance.new("Highlight")
@@ -66,9 +62,6 @@ local function createHighlight(adornee, fillColor, outlineColor, fillTrans, outl
     return h
 end
 
--- ======================
--- Player ESP
--- ======================
 local PlayerESPEnabled = false
 local playerHighlights = {}
 local playerNameTags = {}
@@ -146,10 +139,6 @@ Players.PlayerAdded:Connect(function(p)
 end)
 Players.PlayerRemoving:Connect(function(p) removePlayerESP(p) end)
 
--- ======================
--- Computer ESP (USER METHOD: replaced to fix bug)
--- This matches the method you supplied (computer_monitor.lua) — wired per-model, connects Changed events, updates highlight color from Screen part.
--- ======================
 local ComputerESPEnabled = false
 local computerInfo = {}
 
