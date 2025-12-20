@@ -1,13 +1,9 @@
--- FTF ESP — Fixed: added Snow + White Brick toggles, removed PC label text, restored PC coloring
--- Complete LocalScript. Place in StarterPlayerScripts (client) or run with a local executor.
+-- FTF ESP — By David
 
--- ===== CONFIG =====
-local ICON_IMAGE_ID = ""                   -- optional fallback asset id
-local DOWN_TIME = 28                       -- seconds for down/ ragdoll timer
-local REMOVE_TEXTURES_BATCH = 250          -- batch size for heavy loops
--- ==================
+local ICON_IMAGE_ID = ""
+local DOWN_COUNT_DURATION = 28
+local REMOVE_TEXTURES_BATCH = 250
 
--- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -15,18 +11,17 @@ local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
 
--- Safe destroy
 local function safeDestroy(obj)
     if obj and obj.Parent then
         pcall(function() obj:Destroy() end)
     end
 end
 
--- Batch iterator
 local function batchIterate(list, batchSize, fn)
     batchSize = batchSize or 200
     local i = 1
@@ -40,7 +35,6 @@ local function batchIterate(list, batchSize, fn)
     end
 end
 
--- Remove previous GUI(s)
 for _,c in pairs(CoreGui:GetChildren()) do
     if c.Name == "FTF_ESP_GUI_DAVID" then pcall(function() c:Destroy() end) end
 end
@@ -48,7 +42,6 @@ for _,c in pairs(PlayerGui:GetChildren()) do
     if c.Name == "FTF_ESP_GUI_DAVID" then pcall(function() c:Destroy() end) end
 end
 
--- Root ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "FTF_ESP_GUI_DAVID"
 ScreenGui.ResetOnSpawn = false
@@ -56,9 +49,6 @@ ScreenGui.IgnoreGuiInset = true
 pcall(function() ScreenGui.Parent = CoreGui end)
 if not ScreenGui.Parent or ScreenGui.Parent ~= CoreGui then ScreenGui.Parent = PlayerGui end
 
-----------------------------------------------------------------
--- Visual helpers: highlights (crisp + vivid)
-----------------------------------------------------------------
 local function createHighlight(adornee, fillColor, outlineColor, fillTrans, outlineTrans)
     if not adornee then return nil end
     local h = Instance.new("Highlight")
@@ -72,12 +62,9 @@ local function createHighlight(adornee, fillColor, outlineColor, fillTrans, outl
     return h
 end
 
-----------------------------------------------------------------
--- PLAYER ESP
-----------------------------------------------------------------
 local PlayerESPEnabled = false
-local playerHighlights = {}   -- player -> Highlight
-local playerNameTags = {}     -- player -> BillboardGui
+local playerHighlights = {}
+local playerNameTags = {}
 
 local function isBeast(player)
     return player and player.Character and player.Character:FindFirstChild("BeastPowers") ~= nil
@@ -127,60 +114,55 @@ local function removePlayerESP(player)
 end
 
 local function enablePlayerESP()
-    if PlayerESPEnabled then return end
+    if PlayerESPEnabled then return true end
     PlayerESPEnabled = true
     for _,p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
             pcall(function() createPlayerHighlight(p); createPlayerNameTag(p) end)
         end
     end
+    return true
 end
 
 local function disablePlayerESP()
-    if not PlayerESPEnabled then return end
+    if not PlayerESPEnabled then return false end
     PlayerESPEnabled = false
     for p,_ in pairs(playerHighlights) do safeDestroy(playerHighlights[p]); playerHighlights[p] = nil end
     for p,_ in pairs(playerNameTags) do safeDestroy(playerNameTags[p]); playerNameTags[p] = nil end
+    return false
 end
 
 Players.PlayerAdded:Connect(function(p)
     p.CharacterAdded:Connect(function()
-        task.wait(0.06)
         if PlayerESPEnabled then pcall(function() createPlayerHighlight(p); createPlayerNameTag(p) end) end
     end)
 end)
 Players.PlayerRemoving:Connect(function(p) removePlayerESP(p) end)
 
-----------------------------------------------------------------
--- COMPUTER / PC ESP (state-aware)
--- - IMPORTANT: no billboard text ("PC") is created now — only colored highlights.
-----------------------------------------------------------------
+-- Computer Esp (replaces previous "ESP PCs")
 local ComputerESPEnabled = false
-local computerInfo = {} -- model -> { highlight, conns }
+local computerInfo = {}
+local compAddedConn, compRemovedConn
 
-local function isComputerCandidate(model)
+local function isComputerCandidate_new(model)
     if not model or not model:IsA("Model") then return false end
     local lower = model.Name:lower()
     return lower:find("computer") or lower:find("pc") or lower:find("terminal") or lower:find("console")
 end
 
--- Try to detect state by searching common value names or attributes
-local function getModelState(model)
+local function getModelState_new(model)
     if not model then return nil end
-    -- BoolValue candidates
-    local boolNames = {"Hacked","IsHacked","HackedValue"}
+    local boolNames = {"Hacked", "IsHacked", "HackedValue"}
     for _,n in ipairs(boolNames) do
         local v = model:FindFirstChild(n, true)
         if v and v:IsA("BoolValue") then return v.Value and "hacked" or "ready" end
     end
-    -- StringValue candidates
-    local strNames = {"State","HackState","Status","Phase"}
+    local strNames = {"State", "HackState", "Status", "Phase"}
     for _,n in ipairs(strNames) do
         local s = model:FindFirstChild(n, true)
         if s and s:IsA("StringValue") then return tostring(s.Value):lower() end
     end
-    -- IntValue/progress candidates
-    local intNames = {"State","StateValue","HackProgress","Progress"}
+    local intNames = {"State", "StateValue", "HackProgress", "Progress"}
     for _,n in ipairs(intNames) do
         local iv = model:FindFirstChild(n, true)
         if iv and iv:IsA("IntValue") then
@@ -189,8 +171,7 @@ local function getModelState(model)
             return tostring(iv.Value)
         end
     end
-    -- Attributes
-    local attrs = {"HackState","State","Status"}
+    local attrs = {"HackState", "State", "Status"}
     for _,a in ipairs(attrs) do
         local at = model:GetAttribute(a)
         if at ~= nil then return tostring(at):lower() end
@@ -198,284 +179,130 @@ local function getModelState(model)
     return nil
 end
 
-local function stateColorsFor(s)
-    if not s then return Color3.fromRGB(120,200,255), Color3.fromRGB(20,40,80) end
+local function stateColorsFor_new(s)
+    if not s then return Color3.fromRGB(120, 200, 255), Color3.fromRGB(20, 40, 80) end
     s = tostring(s):lower()
     if s:find("ready") or s:find("avail") then
-        return Color3.fromRGB(80,150,255), Color3.fromRGB(20,40,80) -- blue
+        return Color3.fromRGB(80, 150, 255), Color3.fromRGB(20, 40, 80)
     elseif s:find("hacked") or s:find("done") or s:find("complete") or s == "1" then
-        return Color3.fromRGB(90,230,120), Color3.fromRGB(16,80,24) -- green
+        return Color3.fromRGB(90, 230, 120), Color3.fromRGB(16, 80, 24)
     elseif s:find("wrong") or s:find("failed") or s:find("error") or s == "-1" then
-        return Color3.fromRGB(255,80,80), Color3.fromRGB(120,24,24) -- red
+        return Color3.fromRGB(255, 80, 80), Color3.fromRGB(120, 24, 24)
     elseif s:find("progress") or s:find("hacking") then
-        return Color3.fromRGB(255,200,90), Color3.fromRGB(130,90,20) -- yellow
+        return Color3.fromRGB(255, 200, 90), Color3.fromRGB(130, 90, 20)
     else
-        return Color3.fromRGB(120,200,255), Color3.fromRGB(20,40,80)
+        return Color3.fromRGB(120, 200, 255), Color3.fromRGB(20, 40, 80)
     end
 end
 
-local function updateComputerVisual(model)
+local function createHighlight_new(model, fillColor, outlineColor, transparency, outlineTransparency)
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = model
+    highlight.FillColor = fillColor
+    highlight.OutlineColor = outlineColor
+    highlight.FillTransparency = transparency
+    highlight.OutlineTransparency = outlineTransparency
+    highlight.Parent = workspace
+    return highlight
+end
+
+local function updateHighlightColorFromScreen_new(model, highlight)
+    local screen = model:FindFirstChild("Screen")
+    if screen and screen:IsA("BasePart") then
+        highlight.FillColor = screen.Color
+        highlight.OutlineColor = screen.Color:Lerp(Color3.fromRGB(0,0,0), 0.5)
+    end
+end
+
+local function updateComputerVisual_new(model)
     if not model then return end
     local info = computerInfo[model] or {}
-    local state = getModelState(model)
-    local fill, outline = stateColorsFor(state)
+    local state = getModelState_new(model)
+    local fill, outline = stateColorsFor_new(state)
+
     if info.highlight and info.highlight.Parent then
         info.highlight.FillColor = fill
         info.highlight.OutlineColor = outline
     else
-        info.highlight = createHighlight(model, fill, outline, 0.06, 0)
+        info.highlight = createHighlight_new(model, fill, outline, 0.06, 0)
     end
+
+    updateHighlightColorFromScreen_new(model, info.highlight)
     computerInfo[model] = info
 end
 
-local function wireComputerModel(model)
+local function wireComputerModel_new(model)
     if not model then return end
     local info = computerInfo[model] or { conns = {} }
-    if info.conns then for _,c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
+    if info.conns then for _, c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
     info.conns = {}
+
     local function tryWire(obj)
         if obj:IsA("BoolValue") or obj:IsA("StringValue") or obj:IsA("IntValue") or obj:IsA("NumberValue") then
-            local c = obj.Changed:Connect(function() updateComputerVisual(model) end)
+            local c = obj.Changed:Connect(function() updateComputerVisual_new(model) end)
             table.insert(info.conns, c)
         end
     end
-    for _,d in ipairs(model:GetDescendants()) do tryWire(d) end
-    local addConn = model.DescendantAdded:Connect(function(d) tryWire(d); updateComputerVisual(model) end)
+
+    for _, d in ipairs(model:GetDescendants()) do tryWire(d) end
+
+    local addConn = model.DescendantAdded:Connect(function(d)
+        tryWire(d)
+        updateComputerVisual_new(model)
+    end)
     table.insert(info.conns, addConn)
+
     computerInfo[model] = info
 end
 
-local compAddedConn, compRemovedConn
 local function enableComputerESP()
-    if ComputerESPEnabled then return end
+    if ComputerESPEnabled then return true end
     ComputerESPEnabled = true
-    for _,d in ipairs(Workspace:GetDescendants()) do
-        if d:IsA("Model") and isComputerCandidate(d) then
-            updateComputerVisual(d)
-            wireComputerModel(d)
+
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Model") and isComputerCandidate_new(d) then
+            pcall(function() updateComputerVisual_new(d); wireComputerModel_new(d) end)
         end
     end
-    compAddedConn = Workspace.DescendantAdded:Connect(function(obj)
+
+    compAddedConn = workspace.DescendantAdded:Connect(function(obj)
         if not ComputerESPEnabled then return end
-        if obj:IsA("Model") and isComputerCandidate(obj) then
-            task.delay(0.06, function() updateComputerVisual(obj); wireComputerModel(obj) end)
-        elseif obj:IsA("BasePart") then
-            local mdl = obj:FindFirstAncestorWhichIsA("Model")
-            if mdl and isComputerCandidate(mdl) then task.delay(0.06, function() updateComputerVisual(mdl); wireComputerModel(mdl) end) end
+        if obj:IsA("Model") and isComputerCandidate_new(obj) then
+            pcall(function() updateComputerVisual_new(obj); wireComputerModel_new(obj) end)
         end
     end)
-    compRemovedConn = Workspace.DescendantRemoving:Connect(function(obj)
+
+    compRemovedConn = workspace.DescendantRemoving:Connect(function(obj)
         if obj:IsA("Model") and computerInfo[obj] then
             local info = computerInfo[obj]
             if info.highlight then safeDestroy(info.highlight) end
-            if info.conns then for _,c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
+            if info.conns then for _, c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
             computerInfo[obj] = nil
         end
     end)
+
+    return true
 end
 
 local function disableComputerESP()
-    if not ComputerESPEnabled then return end
+    if not ComputerESPEnabled then return false end
     ComputerESPEnabled = false
+
     if compAddedConn then pcall(function() compAddedConn:Disconnect() end); compAddedConn = nil end
     if compRemovedConn then pcall(function() compRemovedConn:Disconnect() end); compRemovedConn = nil end
-    for mdl,info in pairs(computerInfo) do
+
+    for mdl, info in pairs(computerInfo) do
         if info.highlight then safeDestroy(info.highlight) end
-        if info.conns then for _,c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
+        if info.conns then for _, c in ipairs(info.conns) do pcall(function() c:Disconnect() end) end end
         computerInfo[mdl] = nil
     end
-end
 
-----------------------------------------------------------------
--- Freeze pod & Door ESP (unchanged)
-----------------------------------------------------------------
-local FreezeESPEnabled = false
-local freezeHighlights = {}
-local freezeAddedConn, freezeRemovedConn
-local function isFreezePodModel(m)
-    if not m or not m:IsA("Model") then return false end
-    local n = m.Name:lower()
-    return n:find("freezepod") or (n:find("freeze") and n:find("pod")) or (n:find("freeze") and n:find("capsule"))
-end
-local function enableFreezeESP()
-    if FreezeESPEnabled then return end
-    FreezeESPEnabled = true
-    for _,d in ipairs(Workspace:GetDescendants()) do
-        if d:IsA("Model") and isFreezePodModel(d) then
-            if not freezeHighlights[d] then freezeHighlights[d] = createHighlight(d, Color3.fromRGB(255,100,100), Color3.fromRGB(200,40,40), 0.08, 0) end
-        end
-    end
-    freezeAddedConn = Workspace.DescendantAdded:Connect(function(obj)
-        if not FreezeESPEnabled then return end
-        if obj:IsA("Model") and isFreezePodModel(obj) then freezeHighlights[obj] = createHighlight(obj, Color3.fromRGB(255,100,100), Color3.fromRGB(200,40,40), 0.08, 0) end
-    end)
-    freezeRemovedConn = Workspace.DescendantRemoving:Connect(function(obj) if freezeHighlights[obj] then safeDestroy(freezeHighlights[obj]); freezeHighlights[obj] = nil end end)
-end
-local function disableFreezeESP()
-    if not FreezeESPEnabled then return end
-    FreezeESPEnabled = false
-    if freezeAddedConn then pcall(function() freezeAddedConn:Disconnect() end); freezeAddedConn = nil end
-    if freezeRemovedConn then pcall(function() freezeRemovedConn:Disconnect() end); freezeRemovedConn = nil end
-    for k,_ in pairs(freezeHighlights) do safeDestroy(freezeHighlights[k]); freezeHighlights[k] = nil end
-end
-
-local DoorESPEnabled = false
-local doorHighlights = {}
-local doorAddedConn, doorRemovedConn
-local function isDoorModel(m)
-    if not m or not m:IsA("Model") then return false end
-    local n = m.Name:lower()
-    if n:find("door") then return true end
-    if n:find("exitdoor") then return true end
-    if (n:find("single") or n:find("double")) and n:find("door") then return true end
     return false
 end
-local function enableDoorESP()
-    if DoorESPEnabled then return end
-    DoorESPEnabled = true
-    for _,d in ipairs(Workspace:GetDescendants()) do
-        if d:IsA("Model") and isDoorModel(d) then
-            if not doorHighlights[d] then doorHighlights[d] = createHighlight(d, Color3.fromRGB(255,230,120), Color3.fromRGB(120,90,20), 1.0, 0) end
-        end
-    end
-    doorAddedConn = Workspace.DescendantAdded:Connect(function(obj)
-        if not DoorESPEnabled then return end
-        if obj:IsA("Model") and isDoorModel(obj) then doorHighlights[obj] = createHighlight(obj, Color3.fromRGB(255,230,120), Color3.fromRGB(120,90,20), 1.0, 0) end
-    end)
-    doorRemovedConn = Workspace.DescendantRemoving:Connect(function(obj) if doorHighlights[obj] then safeDestroy(doorHighlights[obj]); doorHighlights[obj] = nil end end)
-end
-local function disableDoorESP()
-    if not DoorESPEnabled then return end
-    DoorESPEnabled = false
-    if doorAddedConn then pcall(function() doorAddedConn:Disconnect() end); doorAddedConn = nil end
-    if doorRemovedConn then pcall(function() doorRemovedConn:Disconnect() end); doorRemovedConn = nil end
-    for k,_ in pairs(doorHighlights) do safeDestroy(doorHighlights[k]); doorHighlights[k] = nil end
-end
 
-----------------------------------------------------------------
--- Down / ragdoll timer (28s)
-----------------------------------------------------------------
-local DownDisplayEnabled = false
-local downMap = {} -- player -> info { gui, label, progress, endTime }
-
-local function createDownGui(player)
-    if downMap[player] then return downMap[player] end
-    if not player.Character then return nil end
-    local head = player.Character:FindFirstChild("Head")
-    if not head then return nil end
-    local bb = Instance.new("BillboardGui", ScreenGui)
-    bb.Adornee = head
-    bb.Size = UDim2.new(0,150,0,44)
-    bb.StudsOffset = Vector3.new(0,3.2,0)
-    bb.AlwaysOnTop = true
-    local frame = Instance.new("Frame", bb)
-    frame.Size = UDim2.new(1,0,1,0)
-    frame.BackgroundTransparency = 0.12
-    frame.BackgroundColor3 = Color3.fromRGB(12,12,16)
-    local corner = Instance.new("UICorner", frame); corner.CornerRadius = UDim.new(0,8)
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Size = UDim2.new(1,-12,1,-12); lbl.Position = UDim2.new(0,6,0,6)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 18
-    lbl.TextColor3 = Color3.fromRGB(230,230,240)
-    lbl.Text = tostring(DOWN_TIME).."s"
-    lbl.TextXAlignment = Enum.TextXAlignment.Center
-    local pbg = Instance.new("Frame", frame)
-    pbg.Size = UDim2.new(0.9,0,0,6); pbg.Position = UDim2.new(0.05,0,1,-10)
-    pbg.BackgroundColor3 = Color3.fromRGB(30,30,34)
-    local pfill = Instance.new("Frame", pbg)
-    pfill.Size = UDim2.new(1,0,1,0)
-    pfill.BackgroundColor3 = Color3.fromRGB(80,170,255)
-    local info = { gui = bb, label = lbl, progress = pfill, endTime = tick() + DOWN_TIME }
-    downMap[player] = info
-    return info
-end
-
-local function removeDownGui(player)
-    if downMap[player] then safeDestroy(downMap[player].gui); downMap[player] = nil end
-end
-
-RunService.Heartbeat:Connect(function()
-    if not DownDisplayEnabled then return end
-    local now = tick()
-    for player,info in pairs(downMap) do
-        if not player or not player.Parent or not info or not info.gui then
-            removeDownGui(player)
-        else
-            local rem = info.endTime - now
-            if rem <= 0 then
-                removeDownGui(player)
-            else
-                if info.label and info.label.Parent then info.label.Text = string.format("%.1f s", rem) end
-                if info.progress and info.progress.Parent then
-                    local frac = math.clamp(rem / DOWN_TIME, 0, 1)
-                    info.progress.Size = UDim2.new(frac,0,1,0)
-                    if frac > 0.5 then info.progress.BackgroundColor3 = Color3.fromRGB(80,170,255)
-                    elseif frac > 0.15 then info.progress.BackgroundColor3 = Color3.fromRGB(255,200,80)
-                    else info.progress.BackgroundColor3 = Color3.fromRGB(255,80,80) end
-                end
-            end
-        end
-    end
-end)
-
-local ragdollConns = {} -- player -> array of conns
-local function setPlayerDown(player)
-    if not DownDisplayEnabled then return end
-    local info = createDownGui(player)
-    if info then info.endTime = tick() + DOWN_TIME end
-end
-local function clearPlayerDown(player) removeDownGui(player) end
-
-local function attachRagdollListeners(player)
-    if ragdollConns[player] then for _,c in ipairs(ragdollConns[player]) do pcall(function() c:Disconnect() end) end end
-    ragdollConns[player] = {}
-    local function onCharacter(char)
-        if not char then return end
-        local hum = char:FindFirstChildWhichIsA("Humanoid") or char:WaitForChild("Humanoid", 5)
-        if not hum then return end
-        -- TempPlayerStatsModule.Ragdoll (if exists)
-        local temp = player:FindFirstChild("TempPlayerStatsModule") or player:FindFirstChild("TempStats") or player:FindFirstChild("TempPlayerStats")
-        if temp then
-            local rv = temp:FindFirstChild("Ragdoll")
-            if rv and rv:IsA("BoolValue") then
-                table.insert(ragdollConns[player], rv.Changed:Connect(function(val) if val then setPlayerDown(player) else clearPlayerDown(player) end end))
-                if rv.Value then setPlayerDown(player) end
-            end
-        end
-        table.insert(ragdollConns[player], hum.StateChanged:Connect(function(_, new)
-            if new == Enum.HumanoidStateType.Ragdoll or new == Enum.HumanoidStateType.FallingDown then setPlayerDown(player)
-            elseif new == Enum.HumanoidStateType.GettingUp or new == Enum.HumanoidStateType.Landed then clearPlayerDown(player) end
-        end))
-        table.insert(ragdollConns[player], hum:GetPropertyChangedSignal("PlatformStand"):Connect(function() if hum.PlatformStand then setPlayerDown(player) else clearPlayerDown(player) end end))
-        table.insert(ragdollConns[player], hum.HealthChanged:Connect(function(h) if h <= 0 then clearPlayerDown(player) end end))
-    end
-    local c = player.CharacterAdded:Connect(function(char) task.wait(0.06); onCharacter(char) end)
-    table.insert(ragdollConns[player], c)
-    if player.Character then onCharacter(player.Character) end
-end
-
-for _,p in pairs(Players:GetPlayers()) do attachRagdollListeners(p) end
-Players.PlayerAdded:Connect(function(p) attachRagdollListeners(p) end)
-Players.PlayerRemoving:Connect(function(p)
-    if ragdollConns[p] then for _,c in ipairs(ragdollConns[p]) do pcall(function() c:Disconnect() end) end; ragdollConns[p] = nil end
-    removeDownGui(p)
-end)
-
-local function toggleDownDisplay()
-    DownDisplayEnabled = not DownDisplayEnabled
-    if not DownDisplayEnabled then
-        for p,_ in pairs(downMap) do removeDownGui(p) end
-    end
-end
-
-----------------------------------------------------------------
--- TEXTURE FEATURES (White Brick & Snow)
-----------------------------------------------------------------
--- White Brick (change non-player BaseParts to white bricks, backup & restore)
+-- White Brick / Snow / RemoveTextures (kept as before)
 local WhiteBrickActive = false
-local whiteBackup = {} -- part -> {Color, Material}
+local whiteBackup = {}
 
 local function isPartPlayerCharacter(part)
     if not part then return false end
@@ -503,17 +330,18 @@ end
 
 local whiteDescConn = nil
 local function enableWhiteBrick()
-    if WhiteBrickActive then return end
+    if WhiteBrickActive then return true end
     WhiteBrickActive = true
     task.spawn(applyWhiteToAll)
     whiteDescConn = Workspace.DescendantAdded:Connect(function(d)
         if not WhiteBrickActive then return end
         if d and d:IsA("BasePart") then task.defer(function() saveAndApplyWhite(d) end) end
     end)
+    return true
 end
 
 local function disableWhiteBrick()
-    if not WhiteBrickActive then return end
+    if not WhiteBrickActive then return false end
     WhiteBrickActive = false
     if whiteDescConn then pcall(function() whiteDescConn:Disconnect() end); whiteDescConn = nil end
     for part, props in pairs(whiteBackup) do
@@ -525,9 +353,9 @@ local function disableWhiteBrick()
         end
     end
     whiteBackup = {}
+    return false
 end
 
--- Snow texture (whiten + lighting backup)
 local SnowActive = false
 local snowBackupParts = {}
 local snowPartConn = nil
@@ -561,17 +389,15 @@ local function restoreLightingFromSnow()
 end
 
 local function enableSnow()
-    if SnowActive then return end
+    if SnowActive then return true end
     SnowActive = true
     backupLightingForSnow()
-    -- remove existing Sky instances (backup clones)
     for _,v in ipairs(Lighting:GetChildren()) do
         if v:IsA("Sky") then
             pcall(function() table.insert(snowSkies, v:Clone()) end)
             pcall(function() v:Destroy() end)
         end
     end
-    -- whiten workspace parts (backup)
     local desc = Workspace:GetDescendants()
     batchIterate(desc, 200, function(obj)
         if obj and obj:IsA("BasePart") then
@@ -607,10 +433,11 @@ local function enableSnow()
             pcall(function() desc.Color = Color3.new(1,1,1); desc.Material = Enum.Material.SmoothPlastic end)
         end
     end)
+    return true
 end
 
 local function disableSnow()
-    if not SnowActive then return end
+    if not SnowActive then return false end
     SnowActive = false
     if snowPartConn then pcall(function() snowPartConn:Disconnect() end); snowPartConn = nil end
     for part, props in pairs(snowBackupParts) do
@@ -622,52 +449,13 @@ local function disableSnow()
         end
     end
     snowBackupParts = {}
-    -- remove created sky and restore backups
     for _,v in ipairs(Lighting:GetChildren()) do if v:IsA("Sky") and v.SkyboxBk == "" then pcall(function() v:Destroy() end) end end
     for _,clone in ipairs(snowSkies) do if clone then pcall(function() clone.Parent = Lighting end) end end
     snowSkies = {}
     restoreLightingFromSnow()
+    return false
 end
 
-----------------------------------------------------------------
--- REMOVE FOG / REMOVE TEXTURES (existing functionality)
-----------------------------------------------------------------
-local RemoveFogActive = false
-local fogBackup = nil
-local function enableRemoveFog()
-    if RemoveFogActive then return end
-    fogBackup = {
-        FogEnd = Lighting.FogEnd,
-        FogStart = Lighting.FogStart,
-        ClockTime = Lighting.ClockTime,
-        Brightness = Lighting.Brightness,
-        GlobalShadows = Lighting.GlobalShadows
-    }
-    pcall(function()
-        Lighting.FogEnd = 100000
-        Lighting.FogStart = 0
-        Lighting.ClockTime = 14
-        Lighting.Brightness = 2
-        Lighting.GlobalShadows = false
-    end)
-    RemoveFogActive = true
-end
-local function disableRemoveFog()
-    if not RemoveFogActive then return end
-    if fogBackup then
-        pcall(function()
-            if fogBackup.FogEnd ~= nil then Lighting.FogEnd = fogBackup.FogEnd end
-            if fogBackup.FogStart ~= nil then Lighting.FogStart = fogBackup.FogStart end
-            if fogBackup.ClockTime ~= nil then Lighting.ClockTime = fogBackup.ClockTime end
-            if fogBackup.Brightness ~= nil then Lighting.Brightness = fogBackup.Brightness end
-            if fogBackup.GlobalShadows ~= nil then Lighting.GlobalShadows = fogBackup.GlobalShadows end
-        end)
-    end
-    fogBackup = nil
-    RemoveFogActive = false
-end
-
--- RemoveTextures (kept simple and batched; backups attempted)
 local RemoveTexturesActive = false
 local rt_parts = {}
 local rt_meshparts = {}
@@ -732,7 +520,7 @@ local function applyLightingChildForRemove(e)
 end
 
 local function enableRemoveTextures()
-    if RemoveTexturesActive then return end
+    if RemoveTexturesActive then return true end
     rt_terrain = {
         WaterWaveSize = Workspace.Terrain.WaterWaveSize,
         WaterWaveSpeed = Workspace.Terrain.WaterWaveSpeed,
@@ -764,10 +552,11 @@ local function enableRemoveTextures()
     end)
 
     RemoveTexturesActive = true
+    return true
 end
 
 local function disableRemoveTextures()
-    if not RemoveTexturesActive then return end
+    if not RemoveTexturesActive then return false end
     if rt_conn then pcall(function() rt_conn:Disconnect() end); rt_conn = nil end
 
     for p, props in pairs(rt_parts) do if p and p.Parent then pcall(function() if props.Material then p.Material = props.Material end; if props.Reflectance then p.Reflectance = props.Reflectance end end) end end
@@ -812,12 +601,603 @@ local function disableRemoveTextures()
     rt_quality = nil
 
     RemoveTexturesActive = false
+    return false
 end
 
-----------------------------------------------------------------
--- UI (menu) with toggles including Snow + White Brick
-----------------------------------------------------------------
--- Loading panel
+-- Contador de Down (Ragdoll Countdown) - toggleable
+local RagdollCountdownActive = false
+local ragdoll = {
+    screenGui = nil,
+    globalFrame = nil,
+    uiList = nil,
+    globalLabels = {},
+    renderConns = {},
+    heartbeatConn = nil,
+    inputConn = nil,
+    playersCharConns = {},
+    playerAddedConn = nil
+}
+
+local function inFreezePodRagdoll(player)
+    local head = player.Character and player.Character:FindFirstChild("Head")
+    if not head then return false end
+    local ok, parts = pcall(function() return workspace:GetPartsInPart(head) end)
+    if not ok or not parts then return false end
+    for _, part in ipairs(parts) do
+        if part.Parent and part.Parent:IsA("Model") and part.Parent.Name == "FreezePod" then
+            local gui = head:FindFirstChild("RagdollCountdown")
+            if gui then
+                local lbl = gui:FindFirstChild("CountdownLabel")
+                if lbl then lbl.Text = "" end
+            end
+            return true
+        end
+    end
+    return false
+end
+
+local function createBillboardCountdownRagdoll(player)
+    local head = player.Character and player.Character:FindFirstChild("Head")
+    if not head then return nil end
+    local billboard = head:FindFirstChild("RagdollCountdown")
+    if not billboard then
+        billboard = Instance.new("BillboardGui")
+        billboard.Name = "RagdollCountdown"
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.new(3, 0, 1, 0)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.Parent = head
+
+        local label = Instance.new("TextLabel", billboard)
+        label.Name = "CountdownLabel"
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.TextScaled = true
+        label.TextColor3 = Color3.new(1,1,1)
+        label.TextStrokeTransparency = 0
+        label.TextStrokeColor3 = Color3.new(0,0,0)
+    end
+    return billboard, billboard:FindFirstChild("CountdownLabel")
+end
+
+local function clearCountdownRagdoll(player)
+    if player and player.Character and player.Character:FindFirstChild("Head") then
+        local billboard = player.Character.Head:FindFirstChild("RagdollCountdown")
+        if billboard then billboard:Destroy() end
+    end
+    if player and player.UserId and ragdoll.globalLabels[player.UserId] then
+        safeDestroy(ragdoll.globalLabels[player.UserId])
+        ragdoll.globalLabels[player.UserId] = nil
+    end
+    if player and ragdoll.renderConns[player] then
+        pcall(function() ragdoll.renderConns[player]:Disconnect() end)
+        ragdoll.renderConns[player] = nil
+    end
+end
+
+local function startCountdownRagdoll(player)
+    if not RagdollCountdownActive then return end
+    if inFreezePodRagdoll(player) then return end
+    if not player.Character then return end
+    local head = player.Character:FindFirstChild("Head")
+    if not head then return end
+
+    local billboard, bbLabel = createBillboardCountdownRagdoll(player)
+    if not bbLabel then return end
+
+    local endTime = tick() + DOWN_COUNT_DURATION
+
+    local function update()
+        if not RagdollCountdownActive then return end
+        if inFreezePodRagdoll(player) then return end
+        local remaining = endTime - tick()
+        if remaining <= 0 then
+            clearCountdownRagdoll(player)
+            return
+        end
+        local formatted = string.format("%.3f", remaining)
+        if bbLabel and bbLabel.Parent then
+            bbLabel.Text = formatted
+        end
+
+        if player and player.UserId then
+            local label = ragdoll.globalLabels[player.UserId]
+            if not label then
+                label = Instance.new("TextLabel")
+                label.Name = (player.Name or "Player") .. "_GlobalCountdown"
+                label.Size = UDim2.new(1, 0, 0, 30)
+                label.BackgroundTransparency = 1
+                label.TextScaled = true
+                label.Font = Enum.Font.SourceSans
+                label.TextColor3 = Color3.new(1,1,1)
+                label.TextStrokeTransparency = 0.5
+                label.Parent = ragdoll.globalFrame
+                ragdoll.globalLabels[player.UserId] = label
+            end
+            if label and label.Parent then
+                label.Text = (player.Name or "Player") .. ": " .. formatted
+            end
+        end
+    end
+
+    if ragdoll.renderConns[player] then
+        pcall(function() ragdoll.renderConns[player]:Disconnect() end)
+        ragdoll.renderConns[player] = nil
+    end
+    local conn = RunService.RenderStepped:Connect(update)
+    ragdoll.renderConns[player] = conn
+
+    coroutine.wrap(function()
+        repeat RunService.Heartbeat:Wait() until tick() >= endTime or not RagdollCountdownActive
+        if conn then pcall(function() conn:Disconnect() end) end
+        ragdoll.renderConns[player] = nil
+        clearCountdownRagdoll(player)
+    end)()
+end
+
+local function listenForToggleRagdoll(player)
+    if ragdoll.inputConn then return end
+    local toggleKey = Enum.KeyCode.P
+    ragdoll.inputConn = UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == toggleKey then
+            local p = player
+            if p and p.Character and p.Character:FindFirstChild("Head") then
+                local billboard = p.Character.Head:FindFirstChild("RagdollCountdown")
+                if billboard then
+                    clearCountdownRagdoll(p)
+                else
+                    startCountdownRagdoll(p)
+                end
+            end
+        end
+    end)
+end
+
+local function updateAllCountdownsRagdoll()
+    if not RagdollCountdownActive then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local character = player.Character
+        if character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            local inRagdoll = humanoid and humanoid.PlatformStand
+            local head = character:FindFirstChild("Head")
+            local billboard = head and head:FindFirstChild("RagdollCountdown")
+            if inRagdoll then
+                if not billboard then
+                    startCountdownRagdoll(player)
+                end
+            else
+                if billboard then
+                    clearCountdownRagdoll(player)
+                end
+            end
+        end
+    end
+end
+
+local function onCharacterAddedRagdoll(player)
+    local function charAdded(char)
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
+            local childConn
+            childConn = char.ChildAdded:Connect(function(child)
+                if child and child:IsA("Humanoid") then
+                    childConn:Disconnect()
+                    listenForToggleRagdoll(player)
+                    updateAllCountdownsRagdoll()
+                end
+            end)
+        else
+            listenForToggleRagdoll(player)
+            updateAllCountdownsRagdoll()
+        end
+    end
+    if ragdoll.playersCharConns[player] then
+        pcall(function() ragdoll.playersCharConns[player]:Disconnect() end)
+    end
+    ragdoll.playersCharConns[player] = player.CharacterAdded:Connect(charAdded)
+    if player.Character then
+        charAdded(player.Character)
+    end
+end
+
+local function enableRagdollCountdown()
+    if RagdollCountdownActive then return true end
+    RagdollCountdownActive = true
+
+    ragdoll.screenGui = Instance.new("ScreenGui")
+    ragdoll.screenGui.Name = "RagdollCountdownScreenUI"
+    ragdoll.screenGui.Parent = PlayerGui
+
+    ragdoll.globalFrame = Instance.new("Frame")
+    ragdoll.globalFrame.Name = "GlobalCountdownFrame"
+    ragdoll.globalFrame.Size = UDim2.new(0, 200, 0, 300)
+    ragdoll.globalFrame.Position = UDim2.new(1, -210, 0.3, 0)
+    ragdoll.globalFrame.BackgroundTransparency = 1
+    ragdoll.globalFrame.Parent = ragdoll.screenGui
+
+    ragdoll.uiList = Instance.new("UIListLayout")
+    ragdoll.uiList.Parent = ragdoll.globalFrame
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        onCharacterAddedRagdoll(player)
+    end
+
+    ragdoll.playerAddedConn = Players.PlayerAdded:Connect(function(pl)
+        onCharacterAddedRagdoll(pl)
+    end)
+
+    ragdoll.heartbeatConn = RunService.Heartbeat:Connect(updateAllCountdownsRagdoll)
+    return true
+end
+
+local function disableRagdollCountdown()
+    if not RagdollCountdownActive then return false end
+    RagdollCountdownActive = false
+
+    if ragdoll.heartbeatConn then
+        pcall(function() ragdoll.heartbeatConn:Disconnect() end)
+        ragdoll.heartbeatConn = nil
+    end
+
+    if ragdoll.inputConn then
+        pcall(function() ragdoll.inputConn:Disconnect() end)
+        ragdoll.inputConn = nil
+    end
+
+    for player, conn in pairs(ragdoll.playersCharConns) do
+        pcall(function() conn:Disconnect() end)
+    end
+    ragdoll.playersCharConns = {}
+
+    if ragdoll.playerAddedConn then
+        pcall(function() ragdoll.playerAddedConn:Disconnect() end)
+        ragdoll.playerAddedConn = nil
+    end
+
+    for player, conn in pairs(ragdoll.renderConns) do
+        pcall(function() conn:Disconnect() end)
+    end
+    ragdoll.renderConns = {}
+
+    for _, lbl in pairs(ragdoll.globalLabels) do
+        safeDestroy(lbl)
+    end
+    ragdoll.globalLabels = {}
+
+    if ragdoll.screenGui then
+        safeDestroy(ragdoll.screenGui)
+        ragdoll.screenGui = nil
+    end
+    ragdoll.globalFrame = nil
+    ragdoll.uiList = nil
+    return false
+end
+
+-- BeastPower Time (toggleable)
+local BeastPowerActive = false
+local beast = {
+    heartbeatConn = nil,
+    playerAddedConn = nil,
+    playersCharConns = {},
+}
+
+local function createBeastLabel(player)
+    if not player or not player.Character then return nil end
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        local childConn
+        childConn = player.Character.ChildAdded:Connect(function(child)
+            if child and child.Name == "HumanoidRootPart" then
+                childConn:Disconnect()
+                pcall(function() createBeastLabel(player) end)
+            end
+        end)
+        return nil
+    end
+    local billboard = hrp:FindFirstChild("BeastPowerBillboard")
+    if not billboard then
+        billboard = Instance.new("BillboardGui")
+        billboard.Name = "BeastPowerBillboard"
+        billboard.Size = UDim2.new(2, 0, 1, 0)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 1
+        billboard.Parent = hrp
+
+        local label = Instance.new("TextLabel")
+        label.Name = "BeastPowerLabel"
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.Arcade
+        label.TextSize = 20
+        label.Text = ""
+        label.TextStrokeTransparency = 0.5
+        label.TextColor3 = Color3.new(1, 1, 1)
+        label.TextStrokeColor3 = Color3.new(0, 0, 0)
+        label.Parent = billboard
+    end
+    return billboard:FindFirstChild("BeastPowerLabel")
+end
+
+local function updateBeastLabels()
+    if not BeastPowerActive then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        local label = player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character.HumanoidRootPart:FindFirstChild("BeastPowerBillboard") and player.Character.HumanoidRootPart.BeastPowerBillboard:FindFirstChild("BeastPowerLabel")
+        if label then
+            local beastPowers = player.Character and player.Character:FindFirstChild("BeastPowers")
+            if beastPowers then
+                local numberValue = beastPowers:FindFirstChildOfClass("NumberValue")
+                if numberValue then
+                    local roundedValue = math.round(numberValue.Value * 100)
+                    label.Text = tostring(roundedValue) .. "%"
+                else
+                    label.Text = ""
+                end
+            else
+                label.Text = ""
+            end
+        end
+    end
+end
+
+local function onCharacterAddedBeast(player)
+    local function charAdded(char)
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            local childConn
+            childConn = char.ChildAdded:Connect(function(child)
+                if child and child.Name == "HumanoidRootPart" then
+                    childConn:Disconnect()
+                    if BeastPowerActive then pcall(function() createBeastLabel(player) end) end
+                end
+            end)
+        else
+            if BeastPowerActive then pcall(function() createBeastLabel(player) end) end
+        end
+    end
+    if beast.playersCharConns[player] then
+        pcall(function() beast.playersCharConns[player]:Disconnect() end)
+    end
+    beast.playersCharConns[player] = player.CharacterAdded:Connect(charAdded)
+    if player.Character then
+        charAdded(player.Character)
+    end
+end
+
+local function enableBeastPowerTime()
+    if BeastPowerActive then return true end
+    BeastPowerActive = true
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            pcall(function() createBeastLabel(player) end)
+        end
+        onCharacterAddedBeast(player)
+    end
+
+    beast.playerAddedConn = Players.PlayerAdded:Connect(function(pl)
+        onCharacterAddedBeast(pl)
+        if BeastPowerActive then pcall(function() createBeastLabel(pl) end) end
+    end)
+
+    beast.heartbeatConn = RunService.Heartbeat:Connect(updateBeastLabels)
+    return true
+end
+
+local function disableBeastPowerTime()
+    if not BeastPowerActive then return false end
+    BeastPowerActive = false
+
+    if beast.heartbeatConn then
+        pcall(function() beast.heartbeatConn:Disconnect() end)
+        beast.heartbeatConn = nil
+    end
+    if beast.playerAddedConn then
+        pcall(function() beast.playerAddedConn:Disconnect() end)
+        beast.playerAddedConn = nil
+    end
+    for player, conn in pairs(beast.playersCharConns) do
+        pcall(function() conn:Disconnect() end)
+    end
+    beast.playersCharConns = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = player.Character.HumanoidRootPart
+            local bb = hrp:FindFirstChild("BeastPowerBillboard")
+            if bb then safeDestroy(bb) end
+        end
+    end
+    return false
+end
+
+-- Computer ProgressBar feature (toggleable)
+local ComputerProgressActive = false
+local computerProgress = {
+    heartbeatConns = {},
+    playerAddedConn = nil,
+    active = false
+}
+
+local function createProgressBar(parent)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ProgressBar"
+    billboard.Adornee = parent
+    billboard.Size = UDim2.new(0, 120, 0, 12)
+    billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Enabled = true
+    billboard.Parent = parent
+
+    local background = Instance.new("Frame")
+    background.Size = UDim2.new(1, 0, 1, 0)
+    background.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    background.BorderSizePixel = 2
+    background.BorderColor3 = Color3.fromRGB(255, 255, 255)
+    background.Parent = billboard
+
+    local bar = Instance.new("Frame")
+    bar.Name = "Bar"
+    bar.Size = UDim2.new(0, 0, 1, 0)
+    bar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    bar.BorderSizePixel = 0
+    bar.Parent = background
+
+    local text = Instance.new("TextLabel")
+    text.Name = "ProgressText"
+    text.Size = UDim2.new(1, 0, 1, 0)
+    text.BackgroundTransparency = 1
+    text.TextColor3 = Color3.fromRGB(255, 255, 255)
+    text.TextStrokeTransparency = 0
+    text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    text.TextScaled = true
+    text.Font = Enum.Font.SciFi
+    text.Text = "0.0%"
+    text.Parent = background
+
+    return billboard, bar, text
+end
+
+local function setupComputerProgress(tableModel)
+    if not ComputerProgressActive then return end
+    if tableModel:FindFirstChild("ProgressBar") then return end
+
+    local billboard, bar, text = createProgressBar(tableModel)
+    local highlight = tableModel:FindFirstChildOfClass("Highlight") or Instance.new("Highlight")
+    highlight.Name = "ComputerHighlight"
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = true
+    highlight.Parent = tableModel
+
+    local savedProgress = 0
+
+    if computerProgress.heartbeatConns[tableModel] then return end
+
+    local conn = RunService.Heartbeat:Connect(function()
+        if not ComputerProgressActive then return end
+
+        local screen = tableModel:FindFirstChild("Screen")
+        if screen and screen:IsA("BasePart") then
+            highlight.FillColor = screen.Color
+            highlight.OutlineColor = screen.Color
+        end
+
+        local highestTouch = 0
+        for _, part in ipairs(tableModel:GetChildren()) do
+            if part:IsA("BasePart") and part.Name:match("^ComputerTrigger") then
+                for _, touchingPart in ipairs(part:GetTouchingParts()) do
+                    local plr = Players:GetPlayerFromCharacter(touchingPart.Parent)
+                    if plr then
+                        local tpsm = plr:FindFirstChild("TempPlayerStatsModule")
+                        if tpsm then
+                            local ragdoll = tpsm:FindFirstChild("Ragdoll")
+                            local ap = tpsm:FindFirstChild("ActionProgress")
+                            if ragdoll and typeof(ragdoll.Value) == "boolean" and not ragdoll.Value then
+                                if ap and typeof(ap.Value) == "number" then
+                                    highestTouch = math.max(highestTouch, ap.Value)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        savedProgress = math.max(savedProgress, highestTouch)
+        bar.Size = UDim2.new(savedProgress, 0, 1, 0)
+
+        if savedProgress >= 1 then
+            bar.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+            text.Text = "COMPLETED"
+        else
+            bar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            text.Text = string.format("%.1f%%", math.floor(savedProgress * 200 + 0.1) / 2)
+        end
+    end)
+
+    computerProgress.heartbeatConns[tableModel] = conn
+end
+
+local function teardownComputerProgress(tableModel)
+    if not tableModel then return end
+    if computerProgress.heartbeatConns[tableModel] then
+        pcall(function() computerProgress.heartbeatConns[tableModel]:Disconnect() end)
+        computerProgress.heartbeatConns[tableModel] = nil
+    end
+    local pb = tableModel:FindFirstChild("ProgressBar")
+    if pb then safeDestroy(pb) end
+    local hl = tableModel:FindFirstChild("ComputerHighlight")
+    if hl and hl:IsA("Highlight") then safeDestroy(hl) end
+end
+
+local function reloadComputersTask()
+    local function scanMap()
+        local ok, currentMap = pcall(function() return ReplicatedStorage:FindFirstChild("CurrentMap") end)
+        if not ok or not currentMap then return end
+        local mapValue = currentMap.Value
+        if mapValue and tostring(mapValue) ~= "" then
+            local map = Workspace:FindFirstChild(tostring(mapValue))
+            if map then
+                for _, obj in ipairs(map:GetChildren()) do
+                    if obj.Name == "ComputerTable" and obj:IsA("Model") then
+                        pcall(function() setupComputerProgress(obj) end)
+                    end
+                end
+            end
+        end
+    end
+
+    scanMap()
+    while ComputerProgressActive do
+        scanMap()
+        task.wait(1)
+    end
+end
+
+local function enableComputerProgress()
+    if ComputerProgressActive then return true end
+    ComputerProgressActive = true
+    computerProgress.active = true
+    spawn(reloadComputersTask)
+    computerProgress.playerAddedConn = Players.PlayerAdded:Connect(function() end)
+    return true
+end
+
+local function disableComputerProgress()
+    if not ComputerProgressActive then return false end
+    ComputerProgressActive = false
+    computerProgress.active = false
+
+    if computerProgress.playerAddedConn then
+        pcall(function() computerProgress.playerAddedConn:Disconnect() end)
+        computerProgress.playerAddedConn = nil
+    end
+
+    for model, conn in pairs(computerProgress.heartbeatConns) do
+        pcall(function() conn:Disconnect() end)
+    end
+    computerProgress.heartbeatConns = {}
+
+    local ok, currentMap = pcall(function() return ReplicatedStorage:FindFirstChild("CurrentMap") end)
+    if ok and currentMap then
+        local mapName = currentMap.Value
+        if mapName and tostring(mapName) ~= "" then
+            local map = Workspace:FindFirstChild(tostring(mapName))
+            if map then
+                for _, obj in ipairs(map:GetChildren()) do
+                    if obj.Name == "ComputerTable" and obj:IsA("Model") then
+                        pcall(function() teardownComputerProgress(obj) end)
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- UI (menu) and wiring (same menu as before, with toggles referencing the functions above)
 local LoadingPanel = Instance.new("Frame", ScreenGui)
 LoadingPanel.Name = "FTF_LoadingPanel"
 LoadingPanel.Size = UDim2.new(0,420,0,120)
@@ -841,7 +1221,6 @@ local innerCorner = Instance.new("UICorner", inner); innerCorner.CornerRadius = 
 local spinTween = TweenService:Create(spinner, TweenInfo.new(1.2, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true), {Rotation = 360})
 spinTween:Play()
 
--- Toast
 local Toast = Instance.new("Frame", ScreenGui)
 Toast.Name = "FTF_Toast"
 Toast.Size = UDim2.new(0,360,0,46)
@@ -859,7 +1238,6 @@ toastClose.Text = "✕"; toastClose.Font = Enum.Font.Gotham; toastClose.TextSize
 local tcCorner = Instance.new("UICorner", toastClose); tcCorner.CornerRadius = UDim.new(0,8)
 toastClose.MouseButton1Click:Connect(function() Toast.Visible = false end)
 
--- Minimized icon showing player's headshot
 local MinimizedIcon = Instance.new("ImageButton", ScreenGui)
 MinimizedIcon.Name = "FTF_MinimizedIcon"
 MinimizedIcon.Size = UDim2.new(0,56,0,56)
@@ -883,7 +1261,6 @@ end
 task.defer(updateMinimizedAvatar)
 pcall(function() if LocalPlayer and LocalPlayer.CharacterAppearanceLoaded then LocalPlayer.CharacterAppearanceLoaded:Connect(function() task.delay(0.4, updateMinimizedAvatar) end) end end)
 
--- Mobile quick toggle
 local MobileToggle = Instance.new("TextButton", ScreenGui)
 MobileToggle.Name = "FTF_MobileToggle"
 MobileToggle.Size = UDim2.new(0,56,0,56)
@@ -896,7 +1273,6 @@ MobileToggle.TextColor3 = Color3.fromRGB(220,220,220)
 MobileToggle.Visible = UserInputService.TouchEnabled and true or false
 local mtCorner = Instance.new("UICorner", MobileToggle); mtCorner.CornerRadius = UDim.new(0,12)
 
--- Main menu frame
 local MENU_W, MENU_H = 520, 380
 local MainFrame = Instance.new("Frame", ScreenGui)
 MainFrame.Name = "FTF_Main"
@@ -907,7 +1283,6 @@ MainFrame.BorderSizePixel = 0
 MainFrame.Visible = false
 local mfCorner = Instance.new("UICorner", MainFrame); mfCorner.CornerRadius = UDim.new(0,12)
 
--- Title & Search
 local TitleBar = Instance.new("Frame", MainFrame)
 TitleBar.Size = UDim2.new(1,0,0,48)
 TitleBar.BackgroundTransparency = 1
@@ -933,7 +1308,6 @@ local CloseBtn = Instance.new("TextButton", TitleBar)
 CloseBtn.Text = "✕"; CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 18
 CloseBtn.BackgroundTransparency = 1; CloseBtn.Size = UDim2.new(0,36,0,36); CloseBtn.Position = UDim2.new(1,-44,0,6); CloseBtn.TextColor3 = Color3.fromRGB(200,200,200)
 
--- Tabs
 local TabsParent = Instance.new("Frame", MainFrame)
 TabsParent.Size = UDim2.new(1,-24,0,44)
 TabsParent.Position = UDim2.new(0,12,0,56)
@@ -959,7 +1333,6 @@ for i,name in ipairs(tabNames) do
     Tabs[name] = t
 end
 
--- Content scroll
 local ContentScroll = Instance.new("ScrollingFrame", MainFrame)
 ContentScroll.Name = "ContentScroll"
 ContentScroll.Size = UDim2.new(1,-24,1,-120)
@@ -976,7 +1349,6 @@ contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     ContentScroll.CanvasSize = UDim2.new(0,0,0, contentLayout.AbsoluteContentSize.Y + 18)
 end)
 
--- UI creators
 local function createToggle(parent, labelText, initial, onToggle)
     local frame = Instance.new("Frame", parent)
     frame.Size = UDim2.new(0.95,0,0,44); frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
@@ -990,18 +1362,32 @@ local function createToggle(parent, labelText, initial, onToggle)
     local swc = Instance.new("UICorner", sw); swc.CornerRadius = UDim.new(0,16)
     local swBg = Instance.new("Frame", sw); swBg.Size = UDim2.new(1,-8,1,-8); swBg.Position = UDim2.new(0,4,0,4); swBg.BackgroundColor3 = Color3.fromRGB(60,60,60)
     local swDot = Instance.new("Frame", swBg); swDot.Size = UDim2.new(0,20,0,20)
-    swDot.Position = UDim2.new(initial and 1 or 0, initial and -22 or 2, 0.5, -10)
-    swDot.BackgroundColor3 = initial and Color3.fromRGB(120,200,120) or Color3.fromRGB(180,180,180)
+    local state = initial and true or false
+    swDot.Position = UDim2.new(state and 1 or 0, state and -22 or 2, 0.5, -10)
+    swDot.BackgroundColor3 = state and Color3.fromRGB(120,200,120) or Color3.fromRGB(180,180,180)
     local dotCorner = Instance.new("UICorner", swDot); dotCorner.CornerRadius = UDim.new(0,10)
-    local state = initial or false
+
     local function updateVisual(s)
-        state = s
-        local target = s and UDim2.new(1,-22,0.5,-10) or UDim2.new(0,2,0.5,-10)
-        TweenService:Create(swDot, TweenInfo.new(0.12), {Position = target}):Play()
-        swDot.BackgroundColor3 = s and Color3.fromRGB(120,200,120) or Color3.fromRGB(160,160,160)
-        swBg.BackgroundColor3 = s and Color3.fromRGB(35,90,35) or Color3.fromRGB(60,60,60)
+        state = s and true or false
+        local target = state and UDim2.new(1,-22,0.5,-10) or UDim2.new(0,2,0.5,-10)
+        pcall(function() TweenService:Create(swDot, TweenInfo.new(0.12), {Position = target}):Play() end)
+        swDot.BackgroundColor3 = state and Color3.fromRGB(120,200,120) or Color3.fromRGB(160,160,160)
+        swBg.BackgroundColor3 = state and Color3.fromRGB(35,90,35) or Color3.fromRGB(60,60,60)
     end
-    sw.MouseButton1Click:Connect(function() pcall(onToggle); updateVisual(not state) end)
+
+    sw.MouseButton1Click:Connect(function()
+        local ok, ret = pcall(onToggle)
+        if ok then
+            if type(ret) == "boolean" then
+                updateVisual(ret)
+            else
+                updateVisual(not state)
+            end
+        else
+            updateVisual(not state)
+        end
+    end)
+
     updateVisual(state)
     return frame, updateVisual, function() return state end, lbl
 end
@@ -1022,7 +1408,6 @@ local function createButton(parent, labelText, btnText, callback)
     return frame, lbl, btn
 end
 
--- Build category content
 local currentTab = "ESP"
 local function clearContent()
     for _,v in pairs(ContentScroll:GetChildren()) do if v:IsA("Frame") then safeDestroy(v) end end
@@ -1030,45 +1415,122 @@ end
 
 local function buildTexturesTab()
     clearContent()
-    -- White Brick toggle
     local tb1, set1 = createToggle(ContentScroll, "Ativar Textures Tijolos Brancos", WhiteBrickActive, function()
-        if WhiteBrickActive then disableWhiteBrick() else enableWhiteBrick() end
+        if WhiteBrickActive then
+            disableWhiteBrick()
+            return false
+        else
+            enableWhiteBrick()
+            return true
+        end
     end)
     tb1.LayoutOrder = 1
-    -- Snow toggle
+
     local tb2, set2 = createToggle(ContentScroll, "Snow texture", SnowActive, function()
-        if SnowActive then disableSnow() else enableSnow() end
+        if SnowActive then
+            disableSnow()
+            return false
+        else
+            enableSnow()
+            return true
+        end
     end)
     tb2.LayoutOrder = 2
-    -- Remove Fog toggle
-    local tb3, set3 = createToggle(ContentScroll, "Remove Fog", RemoveFogActive, function()
-        if RemoveFogActive then disableRemoveFog() else enableRemoveFog() end
+
+    local tb3, set3 = createToggle(ContentScroll, "Remove Textures (performance)", RemoveTexturesActive, function()
+        if RemoveTexturesActive then
+            disableRemoveTextures()
+            return false
+        else
+            enableRemoveTextures()
+            return true
+        end
     end)
     tb3.LayoutOrder = 3
-    -- Remove Textures toggle
-    local tb4, set4 = createToggle(ContentScroll, "Remove Textures (performance)", RemoveTexturesActive, function()
-        if RemoveTexturesActive then disableRemoveTextures() else enableRemoveTextures() end
-    end)
-    tb4.LayoutOrder = 4
 end
 
 local function buildESPTab()
     clearContent()
     local order = 1
-    local a1, _ = createToggle(ContentScroll, "ESP Players", PlayerESPEnabled, function() if PlayerESPEnabled then disablePlayerESP() else enablePlayerESP() end end)
+    local a1, _ = createToggle(ContentScroll, "ESP Players", PlayerESPEnabled, function()
+        if PlayerESPEnabled then
+            disablePlayerESP()
+            return false
+        else
+            enablePlayerESP()
+            return true
+        end
+    end)
     a1.LayoutOrder = order; order = order + 1
-    local a2, _ = createToggle(ContentScroll, "ESP PCs (state colors)", ComputerESPEnabled, function() if ComputerESPEnabled then disableComputerESP() else enableComputerESP() end end)
+
+    local a2, _ = createToggle(ContentScroll, "Computer Esp", ComputerESPEnabled, function()
+        if ComputerESPEnabled then
+            disableComputerESP()
+            return false
+        else
+            enableComputerESP()
+            return true
+        end
+    end)
     a2.LayoutOrder = order; order = order + 1
-    local a3, _ = createToggle(ContentScroll, "ESP Freeze Pods", FreezeESPEnabled, function() if FreezeESPEnabled then disableFreezeESP() else enableFreezeESP() end end)
+
+    local a3, _ = createToggle(ContentScroll, "ESP Freeze Pods", FreezeESPEnabled, function()
+        if FreezeESPEnabled then
+            disableFreezeESP()
+            return false
+        else
+            enableFreezeESP()
+            return true
+        end
+    end)
     a3.LayoutOrder = order; order = order + 1
-    local a4, _ = createToggle(ContentScroll, "ESP Exit Doors", DoorESPEnabled, function() if DoorESPEnabled then disableDoorESP() else enableDoorESP() end end)
+
+    local a4, _ = createToggle(ContentScroll, "ESP Exit Doors", DoorESPEnabled, function()
+        if DoorESPEnabled then
+            disableDoorESP()
+            return false
+        else
+            enableDoorESP()
+            return true
+        end
+    end)
     a4.LayoutOrder = order; order = order + 1
 end
 
 local function buildTimersTab()
     clearContent()
-    local t1, _ = createToggle(ContentScroll, "Mostrar contador de Down (28s)", DownDisplayEnabled, function() toggleDownDisplay() end)
-    t1.LayoutOrder = 1
+    local tb1, set1 = createToggle(ContentScroll, "Contador de Down", RagdollCountdownActive, function()
+        if RagdollCountdownActive then
+            disableRagdollCountdown()
+            return false
+        else
+            enableRagdollCountdown()
+            return true
+        end
+    end)
+    tb1.LayoutOrder = 1
+
+    local tb2, set2 = createToggle(ContentScroll, "BeastPower Time", BeastPowerActive, function()
+        if BeastPowerActive then
+            disableBeastPowerTime()
+            return false
+        else
+            enableBeastPowerTime()
+            return true
+        end
+    end)
+    tb2.LayoutOrder = 2
+
+    local tb3, set3 = createToggle(ContentScroll, "Computer ProgressBar", ComputerProgressActive, function()
+        if ComputerProgressActive then
+            disableComputerProgress()
+            return false
+        else
+            enableComputerProgress()
+            return true
+        end
+    end)
+    tb3.LayoutOrder = 3
 end
 
 local function buildTeleportTab()
@@ -1092,14 +1554,12 @@ local function buildTeleportTab()
     end
 end
 
--- Tabs wiring
 Tabs.ESP.MouseButton1Click:Connect(function() currentTab = "ESP"; Tabs.ESP.BackgroundColor3 = Color3.fromRGB(34,34,34); Tabs.Textures.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Timers.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Teleport.BackgroundColor3 = Color3.fromRGB(28,28,28); buildESPTab() end)
 Tabs.Textures.MouseButton1Click:Connect(function() currentTab = "Textures"; Tabs.Textures.BackgroundColor3 = Color3.fromRGB(34,34,34); Tabs.ESP.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Timers.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Teleport.BackgroundColor3 = Color3.fromRGB(28,28,28); buildTexturesTab() end)
 Tabs.Timers.MouseButton1Click:Connect(function() currentTab = "Timers"; Tabs.Timers.BackgroundColor3 = Color3.fromRGB(34,34,34); Tabs.ESP.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Textures.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Teleport.BackgroundColor3 = Color3.fromRGB(28,28,28); buildTimersTab() end)
 Tabs.Teleport.MouseButton1Click:Connect(function() currentTab = "Teleport"; Tabs.Teleport.BackgroundColor3 = Color3.fromRGB(34,34,34); Tabs.ESP.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Textures.BackgroundColor3 = Color3.fromRGB(28,28,28); Tabs.Timers.BackgroundColor3 = Color3.fromRGB(28,28,28); buildTeleportTab() end)
 SearchBox:GetPropertyChangedSignal("Text"):Connect(function() if currentTab == "ESP" then buildESPTab() elseif currentTab == "Textures" then buildTexturesTab() elseif currentTab == "Timers" then buildTimersTab() else buildTeleportTab() end end)
 
--- Dragging main frame
 do
     local dragging, dragStart, startPos = false, nil, nil
     MainFrame.InputBegan:Connect(function(input)
@@ -1116,7 +1576,6 @@ do
     end)
 end
 
--- Minimize/restore/mobile/k bindings
 MinimizeBtn.MouseButton1Click:Connect(function() pcall(updateMinimizedAvatar); MainFrame.Visible = false; MinimizedIcon.Visible = true end)
 MinimizedIcon.MouseButton1Click:Connect(function() MainFrame.Visible = true; MinimizedIcon.Visible = false end)
 CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
@@ -1131,7 +1590,6 @@ UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
--- Finish loading
 task.spawn(function()
     task.wait(1.1)
     safeDestroy(LoadingPanel)
@@ -1146,7 +1604,6 @@ task.spawn(function()
     menuOpen = true
 end)
 
--- Expose debug toggles
 _G.FTF = _G.FTF or {}
 _G.FTF.EnablePlayerESP = enablePlayerESP
 _G.FTF.DisablePlayerESP = disablePlayerESP
@@ -1156,6 +1613,11 @@ _G.FTF.EnableWhiteBrick = enableWhiteBrick
 _G.FTF.DisableWhiteBrick = disableWhiteBrick
 _G.FTF.EnableSnow = enableSnow
 _G.FTF.DisableSnow = disableSnow
-_G.FTF.ToggleDownDisplay = toggleDownDisplay
+_G.FTF.EnableRagdollCountdown = enableRagdollCountdown
+_G.FTF.DisableRagdollCountdown = disableRagdollCountdown
+_G.FTF.EnableBeastPowerTime = enableBeastPowerTime
+_G.FTF.DisableBeastPowerTime = disableBeastPowerTime
+_G.FTF.EnableComputerProgress = enableComputerProgress
+_G.FTF.DisableComputerProgress = disableComputerProgress
 
-print("[FTF_ESP] Script loaded — added Snow and White Brick toggles; PC billboard removed; PC colors active.")
+print("[FTF_ESP] Script loaded — Computer Esp replaced old PC ESP; other features integrated.")
