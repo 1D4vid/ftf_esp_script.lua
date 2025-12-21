@@ -1,8 +1,4 @@
 -- FTF ESP — By David
--- Integrated Contador de Down, BeastPower Time and Computer ProgressBar (toggleable)
--- Updated: Computer ESP replaced with the method you provided (fixed), menu/draggable/UI kept as requested.
--- WalkSpeed quick input added into "Hackers" category (single input field).
-
 local ICON_IMAGE_ID = ""
 local DOWN_COUNT_DURATION = 28
 local REMOVE_TEXTURES_BATCH = 250
@@ -1369,7 +1365,8 @@ end
 -- ======================
 -- UI: vertical-left model; close is "X"; menu/draggable
 -- (the UI layout has been kept as requested; the Computer ESP now uses the user-provided method)
--- WalkSpeed Quick Input added into Hackers tab (single input)
+-- WalkSpeed Quick Input added into Others tab (single input)
+-- Added HitBox extender integration below.
 -- ======================
 
 local LoadingPanel = Instance.new("Frame", ScreenGui)
@@ -1497,7 +1494,7 @@ CloseBtn.Size = UDim2.new(0,36,0,24)
 CloseBtn.Position = UDim2.new(0,54,0,0)
 CloseBtn.TextColor3 = Color3.fromRGB(200,200,200)
 
--- Sidebar (original categories + "Hackers")
+-- Sidebar (original categories + "Others")
 local Sidebar = Instance.new("Frame", MainFrame)
 Sidebar.Name = "Sidebar"
 Sidebar.Size = UDim2.new(0,200,1, -40)
@@ -1510,8 +1507,8 @@ sideLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
 sideLayout.Padding = UDim.new(0,12)
 
--- include "Hackers" category
-local tabNames = {"ESP","Textures","Timers","Teleport","Hackers"}
+-- include "Others" category
+local tabNames = {"ESP","Textures","Timers","Teleport","Others"}
 
 local Tabs = {}
 local function createSidebarButton(parent, text)
@@ -1654,7 +1651,7 @@ local function clearContent()
 end
 
 -- ======================
--- WalkSpeed GUI (kept as optional panel but Hackers tab will only show the single input)
+-- WalkSpeed GUI (kept as optional panel but Others tab will only show the single input)
 -- ======================
 local WalkSpeedActive = false
 local ws_frame = nil
@@ -1789,6 +1786,63 @@ local function disableWalkSpeedGUI()
     if not WalkSpeedActive then return false end
     WalkSpeedActive = false
     destroyWalkSpeedPanel()
+    return false
+end
+
+-- ======================
+-- HitBox extender (integrated from provided head-size script)
+-- Adds an option "HitBox extender" to the "Others" tab. Toggleable.
+-- ======================
+local HitboxActive = false
+local hitboxConn = nil
+
+-- compatibility defaults
+_G.HeadSize = _G.HeadSize or 10
+_G.HeadSize = tonumber(_G.HeadSize) or 10
+-- original script used _G.Disabled = true to mean "active"; here default is false (inactive)
+_G.Disabled = _G.Disabled == nil and false or _G.Disabled
+
+local function hitboxLoop()
+    if not _G.Disabled then return end
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= LocalPlayer then
+            pcall(function()
+                local char = v.Character
+                if not char then return end
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize)
+                    hrp.CanCollide = false
+                    -- Torna invisível mas continua funcionando
+                    hrp.Transparency = 1
+                    hrp.CastShadow = false
+                    -- Garante invisibilidade só no cliente (quando disponível)
+                    if hrp.LocalTransparencyModifier ~= nil then
+                        hrp.LocalTransparencyModifier = 1
+                    end
+                end
+            end)
+        end
+    end
+end
+
+local function enableHitboxExtender()
+    if HitboxActive then return true end
+    HitboxActive = true
+    _G.HeadSize = _G.HeadSize or 10
+    _G.Disabled = true -- follow original semantics: true -> active
+    if hitboxConn then pcall(function() hitboxConn:Disconnect() end) end
+    hitboxConn = RunService.RenderStepped:Connect(function()
+        hitboxLoop()
+    end)
+    return true
+end
+
+local function disableHitboxExtender()
+    if not HitboxActive then return false end
+    HitboxActive = false
+    _G.Disabled = false
+    if hitboxConn then pcall(function() hitboxConn:Disconnect() end); hitboxConn = nil end
     return false
 end
 
@@ -1937,7 +1991,7 @@ local function buildTeleportTab()
 end
 
 -- ======================
--- Tab behaviour (including Hackers tab with quick WalkSpeed input only)
+-- Tab behaviour (including Others tab with WalkSpeed and HitBox extender)
 -- ======================
 local currentTab = tabNames[1]
 
@@ -1962,10 +2016,10 @@ local function setActiveTab(name)
         pcall(buildTimersTab)
     elseif currentTab == "Teleport" then
         pcall(buildTeleportTab)
-    elseif currentTab == "Hackers" then
+    elseif currentTab == "Others" then
         clearContent()
 
-        -- input row for WalkSpeed value (single input only)
+        -- WalkSpeed input row
         local row = Instance.new("Frame", ContentScroll)
         row.Size = UDim2.new(0.95, 0, 0, 44)
         row.BackgroundColor3 = Color3.fromRGB(28,28,28)
@@ -2040,6 +2094,73 @@ local function setActiveTab(name)
         end)
 
         row.LayoutOrder = 1
+
+        -- HitBox extender toggle row
+        local hbToggleRow, hbUpdate = createToggle(ContentScroll, "HitBox extender", HitboxActive, function()
+            if HitboxActive then
+                disableHitboxExtender()
+                return false
+            else
+                enableHitboxExtender()
+                return true
+            end
+        end)
+        hbToggleRow.LayoutOrder = 2
+
+        -- HitBox size input row
+        local hbRow = Instance.new("Frame", ContentScroll)
+        hbRow.Size = UDim2.new(0.95, 0, 0, 44)
+        hbRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
+        local hbCorner = Instance.new("UICorner", hbRow); hbCorner.CornerRadius = UDim.new(0,10)
+
+        local hbLabel = Instance.new("TextLabel", hbRow)
+        hbLabel.Size = UDim2.new(1, -160, 1, 0)
+        hbLabel.Position = UDim2.new(0, 12, 0, 0)
+        hbLabel.BackgroundTransparency = 1
+        hbLabel.Font = Enum.Font.Gotham
+        hbLabel.TextSize = 14
+        hbLabel.TextColor3 = Color3.fromRGB(210,210,210)
+        hbLabel.TextXAlignment = Enum.TextXAlignment.Left
+        hbLabel.Text = "HitBox Size (valor)"
+
+        local hbTb = Instance.new("TextBox", hbRow)
+        hbTb.Size = UDim2.new(0, 100, 0, 28)
+        hbTb.Position = UDim2.new(1, -160, 0.5, -14)
+        hbTb.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        hbTb.TextColor3 = Color3.fromRGB(240,240,240)
+        hbTb.Font = Enum.Font.SourceSans
+        hbTb.TextSize = 18
+        hbTb.TextScaled = false
+        hbTb.ClearTextOnFocus = true
+        hbTb.PlaceholderText = "Ex: 10"
+        hbTb.Text = tostring(_G.HeadSize or 10)
+
+        local hbApplyBtn = Instance.new("TextButton", hbRow)
+        hbApplyBtn.Size = UDim2.new(0, 72, 0, 28)
+        hbApplyBtn.Position = UDim2.new(1, -86, 0.5, -14)
+        hbApplyBtn.BackgroundColor3 = Color3.fromRGB(38,120,190)
+        hbApplyBtn.Font = Enum.Font.GothamBold
+        hbApplyBtn.TextSize = 14
+        hbApplyBtn.TextColor3 = Color3.fromRGB(240,240,240)
+        hbApplyBtn.Text = "Aplicar"
+        local hbApplyCorner = Instance.new("UICorner", hbApplyBtn); hbApplyCorner.CornerRadius = UDim.new(0,8)
+
+        local function applyHBFromTextbox()
+            local v = tonumber(hbTb.Text)
+            if v and v > 0 then
+                _G.HeadSize = v
+                hbTb.Text = tostring(_G.HeadSize)
+            else
+                hbTb.Text = tostring(_G.HeadSize or 10)
+            end
+        end
+
+        hbApplyBtn.MouseButton1Click:Connect(applyHBFromTextbox)
+        hbTb.FocusLost:Connect(function(enterPressed)
+            if enterPressed then applyHBFromTextbox() end
+        end)
+
+        hbRow.LayoutOrder = 3
 
     else
         clearContent()
@@ -2125,7 +2246,7 @@ task.spawn(function()
     menuOpen = true
 end)
 
--- Expose toggles and utilities globally (same as original) + WalkSpeed
+-- Expose toggles and utilities globally (same as original) + WalkSpeed + HitBox extender
 _G.FTF = _G.FTF or {}
 _G.FTF.EnablePlayerESP = enablePlayerESP
 _G.FTF.DisablePlayerESP = disablePlayerESP
@@ -2143,5 +2264,7 @@ _G.FTF.EnableComputerProgress = enableComputerProgress
 _G.FTF.DisableComputerProgress = disableComputerProgress
 _G.FTF.EnableWalkSpeedGUI = enableWalkSpeedGUI
 _G.FTF.DisableWalkSpeedGUI = disableWalkSpeedGUI
+_G.FTF.EnableHitBoxExtender = enableHitboxExtender
+_G.FTF.DisableHitBoxExtender = disableHitboxExtender
 
-print("[FTF_ESP] Script loaded — Computer ESP replaced with provided method; UI/menu retained. 'Hackers' category now contains WalkSpeed quick input.")
+print("[FTF_ESP] Script loaded — Computer ESP replaced with provided method; UI/menu retained. 'Others' category now contains WalkSpeed quick input and HitBox extender.")
