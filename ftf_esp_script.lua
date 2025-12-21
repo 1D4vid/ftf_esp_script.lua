@@ -1,4 +1,9 @@
 -- FTF ESP — By David
+-- Integrated Contador de Down, BeastPower Time and Computer ProgressBar (toggleable)
+-- Updated: Computer ESP replaced with the method you provided (fixed), menu/draggable/UI kept as requested.
+-- WalkSpeed quick input added into Others category (single input field).
+-- Added: "HitBox extender" option in "Others" tab (integrates the provided head-size script as a toggleable feature).
+
 local ICON_IMAGE_ID = ""
 local DOWN_COUNT_DURATION = 28
 local REMOVE_TEXTURES_BATCH = 250
