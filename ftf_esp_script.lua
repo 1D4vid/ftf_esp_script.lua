@@ -1,6 +1,3 @@
--- ftf_esp_script.lua
--- Full script including "Calibrator Beta" tab with corrected layout,
--- no X/minimize inside calibrator, and an enable/disable toggle for the calibrator effect.
 
 local ICON_IMAGE_ID = ""
 local DOWN_COUNT_DURATION = 28
