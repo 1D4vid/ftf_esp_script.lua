@@ -1,3 +1,7 @@
+-- ftf_esp_script.lua
+-- Full script including "Calibrator Beta" tab with corrected layout,
+-- no X/minimize inside calibrator, and an enable/disable toggle for the calibrator effect.
+
 local ICON_IMAGE_ID = ""
 local DOWN_COUNT_DURATION = 28
 local REMOVE_TEXTURES_BATCH = 250
@@ -1448,7 +1452,8 @@ sideLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
 sideLayout.Padding = UDim.new(0,12)
 
-local tabNames = {"ESP","Textures","Timers","Teleport","Others"}
+-- Insert "Calibrator Beta" tab above "Others"
+local tabNames = {"ESP","Textures","Timers","Teleport","Calibrator Beta","Others"}
 
 local Tabs = {}
 local function createSidebarButton(parent, text)
@@ -1805,6 +1810,7 @@ local function disableStretch()
     return false
 end
 
+-- Build Tabs (ESP, Textures, Timers, Teleport) unchanged
 local function buildTexturesTab()
     clearContent()
     local tb1, set1 = createToggle(ContentScroll, "Ativar Textures Tijolos Brancos", WhiteBrickActive, function()
@@ -1946,6 +1952,409 @@ local function buildTeleportTab()
     end
 end
 
+-- Corrected Calibrator tab builder:
+local function buildCalibratorTab()
+    clearContent()
+
+    -- Local calibrator configuration (kept local to avoid polluting global scope)
+    local EFFECT_NAME = "FTF_CalibratorEffect_" .. tostring(LocalPlayer.UserId)
+    local SAVE_ATTRIBUTE = "ColorCalibState_FTF"
+    local RANGES = {
+        gamma     = {min = 0.05, max = 4.0,  step = 0.005,  default = 0.67},
+        contrast  = {min = -1,   max = 1,    step = 0.005,  default = 0.0},
+        brightness= {min = -1,   max = 1,    step = 0.0001, default = 0.0},
+        saturation= {min = -1,   max = 2.0,  step = 0.01,   default = 0.29},
+        hue       = {min = -180, max = 180,  step = 1,      default = 0},
+        opacity   = {min = 0,    max = 1,    step = 0.01,   default = 1.0}
+    }
+
+    local function clamp(v,a,b) return math.max(a, math.min(b, v)) end
+    local function lerp(a,b,t) return a + (b-a)*t end
+    local function numToStr(n, prec) prec = prec or 3 return string.format("%."..prec.."f", n) end
+
+    local state = {}
+    for k,v in pairs(RANGES) do state[k] = v.default end
+
+    local function encodeState(t)
+        return string.format("%.6g,%.6g,%.6g,%.6g,%.6g,%.6g",
+            t.gamma, t.contrast, t.brightness, t.saturation, t.hue, t.opacity)
+    end
+
+    local function decodeState(s)
+        if type(s) ~= "string" then return nil end
+        local parts = {}
+        for p in string.gmatch(s, "[^,]+") do parts[#parts+1] = p end
+        if #parts < 6 then return nil end
+        return {
+            gamma = tonumber(parts[1]) or state.gamma,
+            contrast = tonumber(parts[2]) or state.contrast,
+            brightness = tonumber(parts[3]) or state.brightness,
+            saturation = tonumber(parts[4]) or state.saturation,
+            hue = tonumber(parts[5]) or state.hue,
+            opacity = tonumber(parts[6]) or state.opacity
+        }
+    end
+
+    local function loadSaved()
+        local raw = LocalPlayer:GetAttribute(SAVE_ATTRIBUTE)
+        local s = decodeState(raw)
+        if s then for k,v in pairs(s) do state[k] = v end end
+    end
+
+    local function saveState()
+        local s = encodeState(state)
+        pcall(function() LocalPlayer:SetAttribute(SAVE_ATTRIBUTE, s) end)
+    end
+
+    loadSaved()
+
+    local effectEnabled = true
+    local function getOrCreateEffect()
+        local eff = Lighting:FindFirstChild(EFFECT_NAME)
+        if not eff then
+            local ok, err = pcall(function()
+                eff = Instance.new("ColorCorrectionEffect")
+                eff.Name = EFFECT_NAME
+                eff.Parent = Lighting
+            end)
+            if not ok then
+                eff = nil
+            end
+        end
+        return eff
+    end
+
+    local function destroyEffect()
+        local eff = Lighting:FindFirstChild(EFFECT_NAME)
+        if eff then pcall(function() eff:Destroy() end) end
+    end
+
+    local function gammaToBrightnessContrast(g)
+        g = clamp(g, 0.02, 10)
+        local gammaBoost = (1 / g) - 1
+        local brightnessAdj = clamp(gammaBoost * 0.20, -0.7, 0.7)
+        local contrastAdj = clamp((g - 1) * 0.14, -0.7, 0.7)
+        return brightnessAdj, contrastAdj
+    end
+
+    local function applyEffectFromState()
+        if not effectEnabled then return end
+        local eff = getOrCreateEffect()
+        if not eff then return end
+
+        local gammaB, gammaC = gammaToBrightnessContrast(state.gamma)
+        local desiredBrightness = clamp(state.brightness + gammaB, -1, 1)
+        local desiredContrast   = clamp(state.contrast + gammaC, -1, 1)
+        local desiredSaturation = clamp(state.saturation, -1, 2)
+
+        local hueUnit = (((state.hue % 360) + 360) % 360) / 360
+        local tintSat = clamp(math.abs(state.hue) / 180 * 0.5, 0, 1)
+        local tintCol = Color3.fromHSV(hueUnit, tintSat, 1)
+
+        local op = clamp(state.opacity, 0, 1)
+        eff.Brightness = lerp(0, desiredBrightness, op)
+        eff.Contrast = lerp(0, desiredContrast, op)
+        eff.Saturation = lerp(0, desiredSaturation, op)
+        eff.TintColor = Color3.new( lerp(1, tintCol.R, op), lerp(1, tintCol.G, op), lerp(1, tintCol.B, op) )
+        eff.Enabled = true
+
+        saveState()
+    end
+
+    if effectEnabled then applyEffectFromState() end
+
+    -- Header row: title + Redefinir + gear (placed as a row inside ContentScroll so layout lines up)
+    local headerRow = Instance.new("Frame", ContentScroll)
+    headerRow.Size = UDim2.new(0.95, 0, 0, 44)
+    headerRow.BackgroundTransparency = 1
+    headerRow.LayoutOrder = 1
+    Instance.new("UICorner", headerRow).CornerRadius = UDim.new(0,6)
+
+    local title = Instance.new("TextLabel", headerRow)
+    title.Size = UDim2.new(1, -200, 1, 0)
+    title.Position = UDim2.new(0, 8, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 16
+    title.TextColor3 = Color3.fromRGB(230,230,230)
+    title.Text = "Calibrador de Cor"
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    local btnRedef = Instance.new("TextButton", headerRow)
+    btnRedef.Size = UDim2.new(0, 80, 0, 28)
+    btnRedef.Position = UDim2.new(1, -180, 0.5, -14)
+    btnRedef.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    btnRedef.Font = Enum.Font.SourceSansBold
+    btnRedef.Text = "Redefinir"
+    btnRedef.TextColor3 = Color3.fromRGB(230,230,230)
+    Instance.new("UICorner", btnRedef).CornerRadius = UDim.new(0,6)
+
+    local gearBtn = Instance.new("TextButton", headerRow)
+    gearBtn.Size = UDim2.new(0, 28, 0, 28)
+    gearBtn.Position = UDim2.new(1, -92, 0.5, -14)
+    gearBtn.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    gearBtn.Text = "⚙"
+    gearBtn.TextColor3 = Color3.fromRGB(220,220,220)
+    gearBtn.Font = Enum.Font.SourceSans
+    gearBtn.TextSize = 18
+    Instance.new("UICorner", gearBtn).CornerRadius = UDim.new(0,4)
+
+    -- Presets menu anchored to ScreenGui near the top-center (simple and keeps alignment stable)
+    local presetsMenu = Instance.new("Frame", ScreenGui)
+    presetsMenu.Name = "Calib_PresetsMenu"
+    presetsMenu.Size = UDim2.new(0, 180, 0, 140)
+    presetsMenu.Position = UDim2.new(0.5, -90, 0.12, 44) -- near top region under the menu
+    presetsMenu.BackgroundColor3 = Color3.fromRGB(28,28,28)
+    presetsMenu.BorderSizePixel = 0
+    presetsMenu.Visible = false
+    Instance.new("UICorner", presetsMenu).CornerRadius = UDim.new(0,6)
+    presetsMenu.ClipsDescendants = true
+    local pmList = Instance.new("UIListLayout", presetsMenu)
+    pmList.Padding = UDim.new(0,6)
+    pmList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    pmList.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local function makePresetButton(text)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -12, 0, 28)
+        b.Position = UDim2.new(0, 6, 0, 0)
+        b.BackgroundColor3 = Color3.fromRGB(52,52,52)
+        b.Text = text
+        b.TextColor3 = Color3.fromRGB(230,230,230)
+        b.Font = Enum.Font.SourceSans
+        b.TextSize = 14
+        b.Parent = presetsMenu
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+        return b
+    end
+
+    local presetButtons = {}
+    presetButtons.default = makePresetButton("Default")
+    presetButtons.ff = makePresetButton("Flee the Facility")
+    presetButtons.highsat = makePresetButton("High Saturation")
+    presetButtons.disable = makePresetButton("Desativar Efeito")
+
+    local function applyPreset(presetName)
+        if presetName == "Default" then
+            for k,def in pairs(RANGES) do state[k] = def.default end
+        elseif presetName == "Flee the Facility" then
+            state.gamma = 0.67
+            state.contrast = 0.28
+            state.brightness = 0.06
+            state.saturation = 0.55
+            state.hue = 0
+            state.opacity = 1.0
+        elseif presetName == "High Saturation" then
+            state.gamma = 0.9
+            state.contrast = 0.18
+            state.brightness = 0.02
+            state.saturation = 1.2
+            state.hue = 0
+            state.opacity = 1.0
+        elseif presetName == "Disable Effect" then
+            effectEnabled = false
+            destroyEffect()
+            return
+        end
+        effectEnabled = true
+        applyEffectFromState()
+        task.delay(0.02, function()
+            for k,_ in pairs(rows) do updateSliderUI(k) end
+        end)
+    end
+
+    presetButtons.default.MouseButton1Click:Connect(function() applyPreset("Default") end)
+    presetButtons.ff.MouseButton1Click:Connect(function() applyPreset("Flee the Facility") end)
+    presetButtons.highsat.MouseButton1Click:Connect(function() applyPreset("High Saturation") end)
+    presetButtons.disable.MouseButton1Click:Connect(function() applyPreset("Disable Effect") end)
+
+    gearBtn.MouseButton1Click:Connect(function()
+        presetsMenu.Visible = not presetsMenu.Visible
+    end)
+
+    -- Toggle row (enable/disable calibrator) and slider rows are children of ContentScroll so UIListLayout stacks them correctly.
+    local toggleRow, toggleUpdate = createToggle(ContentScroll, "Ativar Calibrador", effectEnabled, function()
+        effectEnabled = not effectEnabled
+        if not effectEnabled then
+            destroyEffect()
+        else
+            applyEffectFromState()
+        end
+        return effectEnabled
+    end)
+    toggleRow.LayoutOrder = 2
+
+    -- Slider row factory reusing same visuals as prior implementation but without manual y offsets
+    local function makeRow(index, labelText)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(0.95, 0, 0, 44)
+        row.BackgroundTransparency = 1
+        row.Parent = ContentScroll
+
+        local lbl = Instance.new("TextLabel", row)
+        lbl.Size = UDim2.new(0, 140, 1, 0)
+        lbl.Position = UDim2.new(0, 8, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = labelText
+        lbl.TextColor3 = Color3.fromRGB(200,200,200)
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 14
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local track = Instance.new("Frame", row)
+        track.Size = UDim2.new(1, -260, 0, 12)
+        track.Position = UDim2.new(0, 160, 0.5, -6)
+        track.BackgroundColor3 = Color3.fromRGB(75,75,75)
+        Instance.new("UICorner", track).CornerRadius = UDim.new(0,6)
+
+        local fill = Instance.new("Frame", track)
+        fill.Size = UDim2.new(0, 0, 1, 0)
+        fill.Position = UDim2.new(0, 0, 0, 0)
+        fill.BackgroundColor3 = Color3.fromRGB(70,130,230)
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(0,6)
+
+        local knob = Instance.new("ImageButton", track)
+        knob.Name = "Knob"
+        knob.Size = UDim2.new(0, 14, 0, 14)
+        knob.Position = UDim2.new(0, 0, 0.5, -7)
+        knob.BackgroundColor3 = Color3.fromRGB(240,240,240)
+        knob.AutoButtonColor = false
+
+        local numBox = Instance.new("TextBox", row)
+        numBox.Size = UDim2.new(0, 96, 1, 0)
+        numBox.Position = UDim2.new(1, -96, 0, 0)
+        numBox.BackgroundColor3 = Color3.fromRGB(45,45,45)
+        numBox.TextColor3 = Color3.fromRGB(230,230,230)
+        numBox.Font = Enum.Font.Code
+        numBox.TextSize = 14
+        numBox.ClearTextOnFocus = false
+        Instance.new("UICorner", numBox).CornerRadius = UDim.new(0,6)
+
+        return {row=row, track=track, fill=fill, knob=knob, numBox=numBox}
+    end
+
+    local rows = {}
+    local labels = {"Gamma", "Contraste", "Brilho", "Saturação", "Desvio de matiz", "Opacidade"}
+    local keys = {"gamma","contrast","brightness","saturation","hue","opacity"}
+    for i=1,#labels do
+        local r = makeRow(i, labels[i])
+        r.row.LayoutOrder = 2 + i -- ensure slider rows come after toggle
+        rows[keys[i]] = r
+        local prec = (keys[i]=="hue") and 0 or (keys[i]=="brightness" and 4 or 3)
+        r.numBox.Text = numToStr(state[keys[i]], prec)
+    end
+
+    local statusRow = Instance.new("Frame", ContentScroll)
+    statusRow.Size = UDim2.new(0.95, 0, 0, 24)
+    statusRow.BackgroundTransparency = 1
+    statusRow.LayoutOrder = 2 + #labels + 1
+    local statusText = Instance.new("TextLabel", statusRow)
+    statusText.Size = UDim2.new(1, 0, 1, 0)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = effectEnabled and "Efeito aplicado" or "Efeito desativado"
+    statusText.TextColor3 = Color3.fromRGB(170,170,170)
+    statusText.Font = Enum.Font.SourceSans
+    statusText.TextSize = 12
+    statusText.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- slider UI helpers
+    local draggingKey = nil
+    local dragging = false
+
+    local function updateSliderUI(key)
+        local r = rows[key]
+        local range = RANGES[key]
+        local prec = (key=="hue") and 0 or (key=="brightness" and 4 or 3)
+        local v = state[key]
+        r.numBox.Text = numToStr(v, prec)
+        if r.track.AbsoluteSize.X == 0 then r.track:GetPropertyChangedSignal("AbsoluteSize"):Wait() end
+        local t = (v - range.min) / (range.max - range.min)
+        t = clamp(t, 0, 1)
+        local trackW = r.track.AbsoluteSize.X
+        local knobW = r.knob.AbsoluteSize.X ~= 0 and r.knob.AbsoluteSize.X or 14
+        local knobX = t * math.max(0, trackW - knobW)
+        r.knob.Position = UDim2.new(0, knobX, 0.5, -7)
+        r.fill.Size = UDim2.new(t, 0, 1, 0)
+    end
+
+    for k,_ in pairs(rows) do
+        rows[k].track:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() updateSliderUI(k) end)
+        updateSliderUI(k)
+    end
+
+    local function setSliderFromPos(key, mouseX)
+        local r = rows[key]
+        local range = RANGES[key]
+        local pos = r.track.AbsolutePosition
+        local size = r.track.AbsoluteSize
+        if size.X <= 0 then return end
+        local rel = clamp((mouseX - pos.X) / size.X, 0, 1)
+        local val = lerp(range.min, range.max, rel)
+        local step = range.step or 0.01
+        val = math.floor((val / step) + 0.5) * step
+        val = clamp(val, range.min, range.max)
+        state[key] = val
+        updateSliderUI(key)
+        applyEffectFromState()
+        statusText.Text = "Efeito aplicado"
+    end
+
+    for key, r in pairs(rows) do
+        r.track.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                draggingKey = key
+                dragging = true
+                setSliderFromPos(key, input.Position.X)
+            end
+        end)
+        r.knob.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                draggingKey = key
+                dragging = true
+            end
+        end)
+        r.numBox.FocusLost:Connect(function()
+            local n = tonumber(r.numBox.Text)
+            if n then
+                local range = RANGES[key]
+                n = clamp(n, range.min, range.max)
+                local step = range.step or 0.01
+                n = math.floor((n/step) + 0.5) * step
+                state[key] = n
+                updateSliderUI(key)
+                applyEffectFromState()
+                statusText.Text = "Efeito aplicado"
+            else
+                local prec = (key=="hue") and 0 or (key=="brightness" and 4 or 3)
+                r.numBox.Text = numToStr(state[key], prec)
+            end
+        end)
+    end
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and draggingKey and input.UserInputType == Enum.UserInputType.MouseMovement then
+            setSliderFromPos(draggingKey, input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            draggingKey = nil
+        end
+    end)
+
+    btnRedef.MouseButton1Click:Connect(function()
+        for k,def in pairs(RANGES) do state[k] = def.default end
+        effectEnabled = true
+        applyEffectFromState()
+        for k,_ in pairs(rows) do updateSliderUI(k) end
+        statusText.Text = "Efeito aplicado"
+    end)
+
+    -- When switching tabs clearContent will remove these rows; the effect persists until toggled off.
+end
+
 local currentTab = tabNames[1]
 
 local function setActiveTab(name)
@@ -1969,6 +2378,8 @@ local function setActiveTab(name)
         pcall(buildTimersTab)
     elseif currentTab == "Teleport" then
         pcall(buildTeleportTab)
+    elseif currentTab == "Calibrator Beta" then
+        pcall(buildCalibratorTab)
     elseif currentTab == "Others" then
         clearContent()
 
@@ -2277,4 +2688,4 @@ _G.FTF.DisableHitBoxExtender = disableHitboxExtender
 _G.FTF.EnableStretch = enableStretch
 _G.FTF.DisableStretch = disableStretch
 
-print("[FTF_ESP] Script loaded — Computer ESP replaced with provided method; UI/menu retained. 'Others' category now contains WalkSpeed quick input, HitBox extender and Esticar Tela.")
+print("[FTF_ESP] Script loaded — 'Calibrator Beta' tab added (calibrator UI uses stacked rows; toggle added).")
